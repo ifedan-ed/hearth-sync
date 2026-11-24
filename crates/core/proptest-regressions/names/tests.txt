@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc adf7fc85e69e131fb4a79e7008b06e61b5f1d862b109ecb8f34a1bf7f5fcc233 # shrinks to chars = ['a', 'a', 'a', 'a', 'a', 'a', '.', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', ' ', ' ', ' ', ' ', ' ', ' ', 'a', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '😀', ' ', 'é', '😀', '😀', '😀', ' ', 'é', 'a', 'a', 'ß', 'é', 'é', 'é', '😀', '𐀀', 'é', 'a', 'ß', 'ẞ', 'a', ' ', '😀', '😀', '😀', 'é', 'é', 'ẞ', 'é', '😀', '¡', '¡', ' ', '𐀀', '😀', 'é', 'é', '😀', ' ', 'ẞ', 'é', 'é', 'é', '😀', 'é', 'é', 'é', 'é', '😀', ' ', ' ', '😀', 'a', 'ࠀ', 'A', 'ẞ', ' ', 'é', 'é', 'é', 'é', 'é', 'é', ' ', 'é', 'a', 'ẞ', ' ', 'é', 'é', 'é', 'é', ' ', 'é', ' ', 'é', 'é', ' ', 'é', 'é', 'a'], number = 10, t = 0

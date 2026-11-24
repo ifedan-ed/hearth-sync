@@ -70,6 +70,29 @@ for the person). Not a risk to data; a missing courtesy.
 
 Asked: is a folder's total size worth a field on `/sync/tree` for its root?
 
+## Q6. An entry moved into a folder that is then trashed is never announced
+
+6.10 says a folder deleted gives one `gone` for the folder and nothing for
+what was in it, and 6.3 makes markers only for entries that leave the
+mount. Take `a/f` moved to `b/f` (a move inside the mount: no marker) and
+then `b` trashed (one marker, for `b`). A client whose cursor is before
+both reads no upsert for `f` (it is no longer in the mount) and a `gone`
+for `b`, which it may hold without `f` below it: it still holds `f` at
+`a/f`. F5 ("holds exactly the entries that were in the mount") then does
+not hold. The core's random tests found this.
+
+Meanwhile: the core needs nothing new (a marker for `f` is applied by rule
+5 like any other; one for an id it does not hold is ignored by rule 6).
+The test kit's Hearth gives a marker, in the folder's change, to every
+entry below the folder (a narrower rule, only entries newer than the
+folder's own number, misses a folder moved after something moved into
+it); the simulated Hearth should do the same until the contract says
+otherwise.
+
+Asked: should 6.10 say that trashing or deleting a folder also makes a
+marker for every entry below it whose `seq` is above the folder's own (or,
+simpler, for every entry below it)?
+
 ## Q5. A replace with an equal hash but a different mtime
 
 9.2 says a replace whose hash is equal but whose mtime or exec differs is

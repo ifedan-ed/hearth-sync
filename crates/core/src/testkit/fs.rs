@@ -94,9 +94,7 @@ impl FakeFs {
             return Some((name.to_vec(), *i));
         }
         let k = self.key(name);
-        if k.is_none() {
-            return None;
-        }
+        k.as_ref()?;
         entries
             .iter()
             .find(|(n, _)| self.key(n) == k)
@@ -241,11 +239,11 @@ impl FakeFs {
     /// Removes an item and everything below it.
     pub fn remove(&mut self, parts: &[&str]) {
         let path = LocalPath::from_strs(parts);
-        if let Ok((p, name)) = self.parent_of(&path) {
-            if let Some((real, _)) = self.lookup(p, &name) {
-                self.dir_mut(p).remove(&real);
-                self.touch_dir(p);
-            }
+        if let Ok((p, name)) = self.parent_of(&path)
+            && let Some((real, _)) = self.lookup(p, &name)
+        {
+            self.dir_mut(p).remove(&real);
+            self.touch_dir(p);
         }
     }
 
@@ -447,10 +445,10 @@ impl Fs for FakeFs {
         let (fp, fname) = self.parent_of(from)?;
         let (real, i) = self.lookup(fp, &fname).ok_or(FsError::NotFound)?;
         let (tp, tname) = self.parent_of(to)?;
-        if let Some((_, other)) = self.lookup(tp, &tname) {
-            if other != i {
-                return Err(FsError::Exists);
-            }
+        if let Some((_, other)) = self.lookup(tp, &tname)
+            && other != i
+        {
+            return Err(FsError::Exists);
         }
         // Never into itself.
         let mut cur = Some(tp);

@@ -171,13 +171,13 @@ mod tests {
     use crate::remote::{ApiError, Details};
 
     fn api(status: u16, code: &str) -> RemoteError {
-        RemoteError::Api(ApiError {
+        RemoteError::Api(Box::new(ApiError {
             status,
             code: ErrorCode::parse(code, status),
             message: "m".into(),
             details: Details::default(),
             retry_after_s: Some(7),
-        })
+        }))
     }
 
     #[test]
@@ -231,7 +231,7 @@ mod tests {
         let b = backoff_ms(4, 1000, 300_000, u64::MAX, None);
         assert!((4000..=8000).contains(&b), "{b}");
         let c = backoff_ms(40, 1000, 300_000, 12345, None);
-        assert!(c <= 300_000 && c >= 150_000);
+        assert!((150_000..=300_000).contains(&c));
         assert_eq!(backoff_ms(1, 1000, 300_000, 0, Some(60)), 60_000);
     }
 }

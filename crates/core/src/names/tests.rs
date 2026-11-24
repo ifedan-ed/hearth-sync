@@ -76,10 +76,11 @@ fn remote_word(r: Option<RemoteRefusal>, raw: &LocalName) -> String {
     // Hearth refuses a non-NFC name; the engine never sends one (it sends
     // the NFC form), so the corpus's `not_nfc` means "the engine must
     // normalise", which `remote_refusal` does before checking.
-    if let Some(s) = raw.as_str() {
-        if !unicode_normalization::is_nfc(s) && r.is_none() {
-            return "not_nfc".into();
-        }
+    if let Some(s) = raw.as_str()
+        && !unicode_normalization::is_nfc(s)
+        && r.is_none()
+    {
+        return "not_nfc".into();
     }
     match r {
         None => "ok",

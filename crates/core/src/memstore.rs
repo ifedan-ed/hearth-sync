@@ -88,21 +88,21 @@ impl MemStore {
             if r.node != n {
                 return constraint(format!("remote row of {} put on {n}", r.node));
             }
-            if let Some(other) = self.by_remote.get(&r.id) {
-                if *other != n {
-                    return constraint(format!("remote id {} already on {other}", r.id));
-                }
+            if let Some(other) = self.by_remote.get(&r.id)
+                && *other != n
+            {
+                return constraint(format!("remote id {} already on {other}", r.id));
             }
         }
         let old = std::mem::replace(&mut self.record(n)?.remote, new.clone());
         if let Some(o) = &old {
             self.by_remote.remove(&o.id);
-            if let Some(p) = &o.parent {
-                if let Some(set) = self.remote_kids.get_mut(p) {
-                    set.remove(&n);
-                    if set.is_empty() {
-                        self.remote_kids.remove(p);
-                    }
+            if let Some(p) = &o.parent
+                && let Some(set) = self.remote_kids.get_mut(p)
+            {
+                set.remove(&n);
+                if set.is_empty() {
+                    self.remote_kids.remove(p);
                 }
             }
         }
@@ -120,15 +120,14 @@ impl MemStore {
             if l.node != n {
                 return constraint(format!("local row of {} put on {n}", l.node));
             }
-            if let Some(p) = l.parent {
-                if let Some(other) = self.local_kids.get(&p).and_then(|m| m.get(&l.key)) {
-                    if *other != n {
-                        return constraint(format!(
-                            "name key {:?} in {p} already held by {other}",
-                            l.key
-                        ));
-                    }
-                }
+            if let Some(p) = l.parent
+                && let Some(other) = self.local_kids.get(&p).and_then(|m| m.get(&l.key))
+                && *other != n
+            {
+                return constraint(format!(
+                    "name key {:?} in {p} already held by {other}",
+                    l.key
+                ));
             }
         }
         let old = std::mem::replace(&mut self.record(n)?.local, new.clone());
@@ -139,12 +138,12 @@ impl MemStore {
                     self.by_file.remove(&o.file_id);
                 }
             }
-            if let Some(p) = o.parent {
-                if let Some(m) = self.local_kids.get_mut(&p) {
-                    m.remove(&o.key);
-                    if m.is_empty() {
-                        self.local_kids.remove(&p);
-                    }
+            if let Some(p) = o.parent
+                && let Some(m) = self.local_kids.get_mut(&p)
+            {
+                m.remove(&o.key);
+                if m.is_empty() {
+                    self.local_kids.remove(&p);
                 }
             }
         }
@@ -161,18 +160,18 @@ impl MemStore {
     }
 
     fn set_synced(&mut self, n: NodeId, new: Option<SyncedRow>) -> StoreResult<Option<SyncedRow>> {
-        if let Some(s) = &new {
-            if s.node != n {
-                return constraint(format!("base row of {} put on {n}", s.node));
-            }
+        if let Some(s) = &new
+            && s.node != n
+        {
+            return constraint(format!("base row of {} put on {n}", s.node));
         }
         let old = std::mem::replace(&mut self.record(n)?.synced, new.clone());
-        if let Some(p) = old.as_ref().and_then(|o| o.parent) {
-            if let Some(set) = self.synced_kids.get_mut(&p) {
-                set.remove(&n);
-                if set.is_empty() {
-                    self.synced_kids.remove(&p);
-                }
+        if let Some(p) = old.as_ref().and_then(|o| o.parent)
+            && let Some(set) = self.synced_kids.get_mut(&p)
+        {
+            set.remove(&n);
+            if set.is_empty() {
+                self.synced_kids.remove(&p);
             }
         }
         if let Some(p) = new.as_ref().and_then(|s| s.parent) {
@@ -196,12 +195,12 @@ impl MemStore {
     }
 
     fn remove_node_record(&mut self, n: NodeId) {
-        if let Some(rec) = self.nodes.remove(&n) {
-            if let Some(set) = self.mount_nodes.get_mut(&rec.mount) {
-                set.remove(&n);
-                if set.is_empty() {
-                    self.mount_nodes.remove(&rec.mount);
-                }
+        if let Some(rec) = self.nodes.remove(&n)
+            && let Some(set) = self.mount_nodes.get_mut(&rec.mount)
+        {
+            set.remove(&n);
+            if set.is_empty() {
+                self.mount_nodes.remove(&rec.mount);
             }
         }
     }
@@ -224,12 +223,12 @@ impl MemStore {
             Some(t) => self.waits.insert(n, t),
             None => self.waits.remove(&n),
         };
-        if let Some(o) = old {
-            if let Some(set) = self.waiters.get_mut(&o) {
-                set.remove(&n);
-                if set.is_empty() {
-                    self.waiters.remove(&o);
-                }
+        if let Some(o) = old
+            && let Some(set) = self.waiters.get_mut(&o)
+        {
+            set.remove(&n);
+            if set.is_empty() {
+                self.waiters.remove(&o);
             }
         }
         if let Some(t) = target {

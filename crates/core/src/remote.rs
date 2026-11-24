@@ -516,8 +516,9 @@ pub enum RemoteError {
     /// No answer, or a cut one: the request may or may not have happened
     /// (sync-api.md 14.5). Treated as a lost answer: repeat or ask.
     Lost(String),
-    /// Hearth answered with a refusal.
-    Api(ApiError),
+    /// Hearth answered with a refusal (boxed: it carries an entry, and
+    /// errors travel through every request's result).
+    Api(Box<ApiError>),
     /// An answer carried another `X-Hearth-Instance` than the one the
     /// engine connected to (1.9): stop and ask, before trusting anything.
     InstanceChanged(String),

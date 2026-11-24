@@ -107,6 +107,7 @@ fn run_checked(
     w: &mut World,
     mut e: Engine<MemStore>,
     crash_at: Option<usize>,
+    rules: VolumeRules,
 ) -> Result<Engine<MemStore>, TestCaseError> {
     let mut steps = 0;
     let mut idle = 0;
@@ -115,7 +116,7 @@ fn run_checked(
         prop_assert!(steps < BOUND, "no bound: a sync loop (I7)");
         if Some(steps) == crash_at {
             let store = e.into_store();
-            e = Engine::new(store, World::config(VolumeRules::LINUX)).expect("ok");
+            e = Engine::new(store, World::config(rules)).expect("ok");
         }
         let out = e.step(&mut w.env()).expect("no store failure");
         let obs = e.observe().expect("ok");
@@ -165,6 +166,74 @@ fn initial(w: &mut World) -> Vec<Vec<u8>> {
     saved
 }
 
+/// One random case. On a case-sensitive volume everything must converge
+/// with nothing listed; on an insensitive one, what is not converged must
+/// be listed (two Hearth names that are one name here).
+fn random_case(
+    rules: VolumeRules,
+    seed: u64,
+    locals: &[Change],
+    remotes: &[Change],
+    crash: Option<usize>,
+) -> Result<(), TestCaseError> {
+    let strict = !rules.case_insensitive;
+    let mut w = World::new(seed, rules);
+    let mut saved = initial(&mut w);
+    let e = Engine::new(MemStore::new(), World::config(rules)).expect("ok");
+    let mut e = run_checked(&mut w, e, None, rules)?;
+    prop_assert_eq!(w.fs.user_files(), w.remote.files());
+    let mut written = Vec::new();
+    for c in locals {
+        apply_local(&mut w, c, &mut written);
+    }
+    // Saved means seen at rest: what the person wrote and still has when
+    // sync looks (a file written and deleted before is not).
+    saved.extend(w.fs.user_files().into_values());
+    for c in remotes {
+        apply_remote(&mut w, c, &mut saved);
+    }
+    e.notify(Event::WatcherOverflow);
+    e.notify(Event::RemoteHint);
+    let e = run_checked(&mut w, e, crash, rules)?;
+    let obs = e.observe().expect("ok");
+    if strict {
+        let problems: Vec<_> = obs
+            .problems
+            .iter()
+            .map(|p| (p.kind, p.path.clone()))
+            .collect();
+        prop_assert!(problems.is_empty(), "problems: {:?}", problems);
+        prop_assert_eq!(w.fs.user_files(), w.remote.files(), "seed {}", seed);
+        let v = guarantees::i8_converged(&obs);
+        prop_assert!(v.is_empty(), "I8: {:?}", v);
+    } else {
+        let v = guarantees::i10_problems_listed(&obs);
+        prop_assert!(v.is_empty(), "I10: {:?}", v);
+        let stuck: Vec<_> = obs
+            .problems
+            .iter()
+            .filter(|p| p.kind == crate::tree::ProblemKind::Stuck)
+            .collect();
+        prop_assert!(stuck.is_empty(), "stuck: {:?}", stuck);
+    }
+    let world = guarantees::WorldHashes {
+        device: w.fs.files().into_iter().map(|f| f.hash).collect(),
+        hearth: w.remote.all_hashes(),
+    };
+    let saved: BTreeSet<Hash> = saved.iter().map(|b| Hash::of(b)).collect();
+    let v = guarantees::i1_saved_bytes_present(&saved, &world);
+    prop_assert!(v.is_empty(), "I1: {:?}", v);
+    // Quiescence (I7): one more round asks Hearth nothing but the wait.
+    let before = w.remote.log.len();
+    let mut e = e;
+    let _ = e.step(&mut w.env());
+    e.wait_remote(&mut w.env(), 0).expect("ok");
+    let _ = e.step(&mut w.env());
+    let busy = w.remote.busy_requests_since(before);
+    prop_assert!(busy.is_empty(), "requests after convergence: {:?}", busy);
+    Ok(())
+}
+
 proptest! {
     #![proptest_config(ProptestConfig {
         failure_persistence: None,
@@ -173,6 +242,7 @@ proptest! {
 
     /// Random changes on both sides converge, lose nothing and never write
     /// without a condition; if a crash is thrown in anywhere, the same.
+    /// On a case-sensitive volume.
     #[test]
     fn random_changes_converge_and_lose_nothing(
         seed in any::<u64>(),
@@ -180,45 +250,19 @@ proptest! {
         remotes in proptest::collection::vec(change(), 0..6),
         crash in proptest::option::of(1usize..200),
     ) {
-        let mut w = World::new(seed, VolumeRules::LINUX);
-        let mut saved = initial(&mut w);
-        let e = Engine::new(MemStore::new(), World::config(VolumeRules::LINUX)).expect("ok");
-        let mut e = run_checked(&mut w, e, None)?;
-        prop_assert_eq!(w.fs.user_files(), w.remote.files());
-        let mut written = Vec::new();
-        for c in &locals {
-            apply_local(&mut w, c, &mut written);
-        }
-        // Saved means seen at rest: what the person wrote and still has
-        // when sync looks (a file written and deleted before is not).
-        saved.extend(w.fs.user_files().into_values());
-        for c in &remotes {
-            apply_remote(&mut w, c, &mut saved);
-        }
-        e.notify(Event::WatcherOverflow);
-        e.notify(Event::RemoteHint);
-        let e = run_checked(&mut w, e, crash)?;
-        let obs = e.observe().expect("ok");
-        let problems: Vec<_> = obs.problems.iter().map(|p| (p.kind, p.path.clone())).collect();
-        prop_assert!(problems.is_empty(), "problems: {:?}", problems);
-        prop_assert_eq!(w.fs.user_files(), w.remote.files(), "seed {}", seed);
-        let v = guarantees::i8_converged(&obs);
-        prop_assert!(v.is_empty(), "I8: {:?}", v);
-        let world = guarantees::WorldHashes {
-            device: w.fs.files().into_iter().map(|f| f.hash).collect(),
-            hearth: w.remote.all_hashes(),
-        };
-        let saved: BTreeSet<Hash> = saved.iter().map(|b| Hash::of(b)).collect();
-        let v = guarantees::i1_saved_bytes_present(&saved, &world);
-        prop_assert!(v.is_empty(), "I1: {:?}", v);
-        // Quiescence (I7): one more round asks Hearth nothing but the wait.
-        let before = w.remote.log.len();
-        let mut e = e;
-        let _ = e.step(&mut w.env());
-        e.wait_remote(&mut w.env(), 0).expect("ok");
-        let _ = e.step(&mut w.env());
-        let busy = w.remote.busy_requests_since(before);
-        prop_assert!(busy.is_empty(), "requests after convergence: {:?}", busy);
+        random_case(VolumeRules::LINUX, seed, &locals, &remotes, crash)?;
+    }
+
+    /// The same on a case-insensitive volume, where `f.txt` and `F.txt`
+    /// are one name: what cannot sync must be listed (I10), nothing lost.
+    #[test]
+    fn random_changes_on_a_case_insensitive_volume(
+        seed in any::<u64>(),
+        locals in proptest::collection::vec(change(), 0..6),
+        remotes in proptest::collection::vec(change(), 0..6),
+        crash in proptest::option::of(1usize..200),
+    ) {
+        random_case(VolumeRules::WINDOWS, seed, &locals, &remotes, crash)?;
     }
 
     /// Applying the same feed twice changes nothing (F2): a converged
@@ -229,7 +273,7 @@ proptest! {
         let mut w = World::new(seed, VolumeRules::LINUX);
         initial(&mut w);
         let e = Engine::new(MemStore::new(), World::config(VolumeRules::LINUX)).expect("ok");
-        let mut e = run_checked(&mut w, e, None)?;
+        let mut e = run_checked(&mut w, e, None, VolumeRules::LINUX)?;
         let before_dump = crate::store::conformance::dump(e.store());
         let mounts = e.store().mounts().expect("ok");
         let mut m = mounts[0].clone();
@@ -237,7 +281,7 @@ proptest! {
         m.caught_up = false;
         e.store_mut().apply(vec![crate::store::Write::PutMount(m)]).expect("ok");
         let before = w.remote.log.len();
-        let e = run_checked(&mut w, e, None)?;
+        let e = run_checked(&mut w, e, None, VolumeRules::LINUX)?;
         let busy: Vec<_> = w
             .remote
             .busy_requests_since(before)

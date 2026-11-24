@@ -39,8 +39,9 @@ enum Outcome {
     Continue(Batch),
     /// The operation is complete; these writes change the pictures.
     Done(Batch),
-    /// It failed.
-    Fail(Fail),
+    /// It failed (boxed: the failure carries an entry, the other variants
+    /// only a list).
+    Fail(Box<Fail>),
 }
 
 /// A failure with what the engine should take in from it.
@@ -88,7 +89,7 @@ impl Fail {
 }
 
 fn fail(f: Fail) -> EngineResult<Outcome> {
-    Ok(Outcome::Fail(f))
+    Ok(Outcome::Fail(Box::new(f)))
 }
 
 /// The contract's file condition from the planner's condition.
@@ -150,7 +151,7 @@ impl<S: Store> Engine<S> {
                 self.runtime.remove(&op.id);
                 self.commit(b)?;
             }
-            Outcome::Fail(f) => self.fail_op(env, op, f)?,
+            Outcome::Fail(f) => self.fail_op(env, op, *f)?,
         }
         Ok(true)
     }
@@ -189,12 +190,12 @@ impl<S: Store> Engine<S> {
                     let _ = env.fs.remove_temp(&layout::temp_for(op.id));
                 }
                 let mut b = vec![Write::DelOp(op.id), Write::MarkDirty(op.node)];
-                if f.rehash {
-                    if let Some(mut l) = self.store.node(op.node)?.and_then(|r| r.local) {
-                        l.hash = None;
-                        b.push(Write::PutLocal(l));
-                        self.hash_queue.insert(op.node);
-                    }
+                if f.rehash
+                    && let Some(mut l) = self.store.node(op.node)?.and_then(|r| r.local)
+                {
+                    l.hash = None;
+                    b.push(Write::PutLocal(l));
+                    self.hash_queue.insert(op.node);
                 }
                 self.commit(b)?;
                 if let Some(e) = f.entry {
@@ -256,7 +257,9 @@ impl<S: Store> Engine<S> {
         Ok(self.store.mounts()?.into_iter().find(|m| m.id == rec.mount))
     }
 
-    /// The local picture of an item at a path, from a fresh `stat`.
+    /// The local picture of an item at a path, from a fresh `stat`. Every
+    /// argument is a column of the row it makes, hence their number.
+    #[allow(clippy::too_many_arguments)]
     fn fresh_local(
         &self,
         env: &mut Env<'_>,
@@ -331,10 +334,10 @@ impl<S: Store> Engine<S> {
         e: &Entry,
         b: &mut Batch,
     ) -> EngineResult<bool> {
-        if let Some(o) = self.store.node_by_remote(&e.id)? {
-            if o != rec.node {
-                return Ok(false);
-            }
+        if let Some(o) = self.store.node_by_remote(&e.id)?
+            && o != rec.node
+        {
+            return Ok(false);
         }
         let mount = rec
             .remote
@@ -498,26 +501,26 @@ impl<S: Store> Engine<S> {
                     Ok(h) => h,
                     Err(e) => return fail(Fail::fs(&e)),
                 };
-                if let Some(want) = r.hash {
-                    if want != got {
-                        if op.attempt == 0 {
-                            // Once more from zero, then it is Hearth's
-                            // problem to report (3.6).
-                            let _ = env.fs.truncate(&temp, 0);
-                            t.done = 0;
-                            op.attempt = 1;
-                            return Ok(Outcome::Continue(vec![
-                                Write::PutOp(op),
-                                Write::PutTransfer(t),
-                            ]));
-                        }
-                        return fail(Fail::new(Failure::WaitForChange(
-                            crate::tree::ProblemKind::HashMismatch,
-                            format!(
-                                "Hearth's copy does not match its hash: expected {want}, read {got}"
-                            ),
-                        )));
+                if let Some(want) = r.hash
+                    && want != got
+                {
+                    if op.attempt == 0 {
+                        // Once more from zero, then it is Hearth's
+                        // problem to report (3.6).
+                        let _ = env.fs.truncate(&temp, 0);
+                        t.done = 0;
+                        op.attempt = 1;
+                        return Ok(Outcome::Continue(vec![
+                            Write::PutOp(op),
+                            Write::PutTransfer(t),
+                        ]));
                     }
+                    return fail(Fail::new(Failure::WaitForChange(
+                        crate::tree::ProblemKind::HashMismatch,
+                        format!(
+                            "Hearth's copy does not match its hash: expected {want}, read {got}"
+                        ),
+                    )));
                 }
                 let now = env.clock.now_ns();
                 let mtime_ns = if r.mtime_us > 0 {
@@ -879,6 +882,9 @@ impl<S: Store> Engine<S> {
 
     // ----- uploads (3.6, contract 9.1, 9.2, 10) -----
 
+    // The runtime entry is made in one branch of several that return early;
+    // an `entry` call cannot express that.
+    #[allow(clippy::map_entry)]
     fn op_upload(&mut self, env: &mut Env<'_>, mut op: OpRow) -> EngineResult<Outcome> {
         let Some(rec) = self.rec(op.node)? else {
             return fail(Fail::replan());
@@ -1020,18 +1026,17 @@ impl<S: Store> Engine<S> {
                         f.rehash = true;
                         return fail(f);
                     }
-                    if !rt.stored.contains(&k) {
-                        if let Err(e) =
+                    if !rt.stored.contains(&k)
+                        && let Err(e) =
                             env.remote
                                 .upload_chunk(&session, k, &bytes, Hash::of(&bytes))
-                        {
-                            if e.code() == Some(&ErrorCode::UploadGone) {
-                                self.runtime.remove(&op.id);
-                                op.state = OpState::Planned;
-                                return Ok(Outcome::Continue(vec![Write::PutOp(op)]));
-                            }
-                            return fail(Fail::remote(&e));
+                    {
+                        if e.code() == Some(&ErrorCode::UploadGone) {
+                            self.runtime.remove(&op.id);
+                            op.state = OpState::Planned;
+                            return Ok(Outcome::Continue(vec![Write::PutOp(op)]));
                         }
+                        return fail(Fail::remote(&e));
                     }
                     if let Some(rt) = self.runtime.get_mut(&op.id) {
                         if let Some(h) = rt.hasher.as_mut() {
@@ -1181,12 +1186,11 @@ impl<S: Store> Engine<S> {
                 // Finished more than a session's life ago, or never: for a
                 // replace, the file says (3.10); otherwise start again and
                 // let 8.5 tell.
-                if let Some(r) = &rec.remote {
-                    if let Ok(info) = env.remote.entry(&r.id) {
-                        if info.entry.hash == Some(expect) {
-                            return self.upload_done(rec, l, &info.entry, expect);
-                        }
-                    }
+                if let Some(r) = &rec.remote
+                    && let Ok(info) = env.remote.entry(&r.id)
+                    && info.entry.hash == Some(expect)
+                {
+                    return self.upload_done(rec, l, &info.entry, expect);
                 }
                 self.runtime.remove(&op.id);
                 op.state = OpState::Planned;
@@ -1219,10 +1223,11 @@ impl<S: Store> Engine<S> {
         };
         match e.code() {
             Some(ErrorCode::Exists | ErrorCode::Precondition) => {
-                if let Some(entry) = e.entry() {
-                    if entry.hash == Some(expect) && entry.kind == Kind::File {
-                        return self.upload_done(rec, &l, entry, expect);
-                    }
+                if let Some(entry) = e.entry()
+                    && entry.hash == Some(expect)
+                    && entry.kind == Kind::File
+                {
+                    return self.upload_done(rec, &l, entry, expect);
                 }
                 fail(Fail::remote(e))
             }
@@ -1346,13 +1351,13 @@ impl<S: Store> Engine<S> {
         if op.state == OpState::Transferring {
             // A two-step rename after a crash: where is the item now?
             let beside = self.store.transfer(op.id)?.and_then(|t| t.aside);
-            if let Some(b) = beside {
-                if env.fs.stat(&b).ok().flatten().is_some() {
-                    return match env.fs.rename_noreplace(&b, &to) {
-                        Ok(()) => finish(self, env),
-                        Err(e) => fail(Fail::fs(&e).rescan(op.target_parent)),
-                    };
-                }
+            if let Some(b) = beside
+                && env.fs.stat(&b).ok().flatten().is_some()
+            {
+                return match env.fs.rename_noreplace(&b, &to) {
+                    Ok(()) => finish(self, env),
+                    Err(e) => fail(Fail::fs(&e).rescan(op.target_parent)),
+                };
             }
             if env
                 .fs
@@ -1503,15 +1508,15 @@ impl<S: Store> Engine<S> {
             }
             Ok(Outcome::Done(b))
         };
-        if op.state == OpState::Transferring {
-            if let Some(a) = self.store.transfer(op.id)?.and_then(|t| t.aside) {
-                let at_held = env.fs.stat(&a).ok().flatten();
-                let at_path = env.fs.stat(&path).ok().flatten();
-                if at_held.is_some_and(|m| m.file_id == l.file_id)
-                    && at_path.is_none_or(|m| m.file_id != l.file_id)
-                {
-                    return done(self, env, a);
-                }
+        if op.state == OpState::Transferring
+            && let Some(a) = self.store.transfer(op.id)?.and_then(|t| t.aside)
+        {
+            let at_held = env.fs.stat(&a).ok().flatten();
+            let at_path = env.fs.stat(&path).ok().flatten();
+            if at_held.is_some_and(|m| m.file_id == l.file_id)
+                && at_path.is_none_or(|m| m.file_id != l.file_id)
+            {
+                return done(self, env, a);
             }
         }
         // It must be exactly what the base and the local picture say: the
@@ -1621,10 +1626,10 @@ impl<S: Store> Engine<S> {
         {
             b.push(Write::DelNode(op.node));
         }
-        if let Some(p) = &r.parent {
-            if let Some(pn) = self.store.node_by_remote(p)? {
-                b.push(Write::MarkDirty(pn));
-            }
+        if let Some(p) = &r.parent
+            && let Some(pn) = self.store.node_by_remote(p)?
+        {
+            b.push(Write::MarkDirty(pn));
         }
         Ok(Outcome::Done(b))
     }

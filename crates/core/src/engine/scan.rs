@@ -73,11 +73,11 @@ impl<S: Store> Engine<S> {
     /// One unit of disk work: a folder read, a file hashed, or the missing
     /// items settled. False when there is none.
     pub(super) fn scan_work(&mut self, env: &mut Env<'_>) -> EngineResult<bool> {
-        if self.full_scan_wanted {
-            if let Some(r) = self.root {
-                self.full_scan_wanted = false;
-                self.scan_queue.insert(r, true);
-            }
+        if self.full_scan_wanted
+            && let Some(r) = self.root
+        {
+            self.full_scan_wanted = false;
+            self.scan_queue.insert(r, true);
         }
         if let Some((&n, &recursive)) = self.scan_queue.iter().next() {
             self.scan_queue.remove(&n);
@@ -170,10 +170,10 @@ impl<S: Store> Engine<S> {
         };
         // Path problems of this folder are listed afresh.
         for p in self.store.problems()? {
-            if let Subject::Path(pp) = &p.subject {
-                if pp.parent().as_ref() == Some(&path) {
-                    batch.push(Write::DelProblem(p.subject.clone()));
-                }
+            if let Subject::Path(pp) = &p.subject
+                && pp.parent().as_ref() == Some(&path)
+            {
+                batch.push(Write::DelProblem(p.subject.clone()));
             }
         }
         let mut entries = entries;
@@ -187,14 +187,16 @@ impl<S: Store> Engine<S> {
         }
         let mut seen = BTreeSet::new();
         let mut used = BTreeSet::new();
-        let mut rescan_self = false;
         let mounts = self.store.mounts()?;
+        // First, what each entry is; problems and ignored names are settled
+        // here and take no part in matching.
+        let mut cands: Vec<(crate::fs::DirEntry, crate::names::NameKey, Kind)> = Vec::new();
         for e in entries {
             let child_path = path.join(&e.name);
-            if let Some(s) = e.name.as_str() {
-                if is_engine_name(s, dir == root) {
-                    continue;
-                }
+            if let Some(s) = e.name.as_str()
+                && is_engine_name(s, dir == root)
+            {
+                continue;
             }
             let Some(key) = name_key(&e.name, &self.cfg.volume) else {
                 batch.push(self.problem_write(
@@ -236,63 +238,105 @@ impl<S: Store> Engine<S> {
                 )?);
                 continue;
             }
-            let held = by_key.get(&key).copied();
-            if let Some(parts) = view::path_strs(&child_path) {
-                if self.ignore.is_ignored(&parts, kind == Kind::Folder) {
-                    // Ignored: never uploaded, never deleted (3.14). A node
-                    // already held under this name is kept as it is.
-                    if let Some(n) = held {
-                        seen.insert(n);
-                    }
-                    continue;
-                }
-            }
-            if let Some(n) = held {
-                seen.insert(n);
-                self.absent_roots.remove(&n);
-                let Some(l) = self.store.node(n)?.and_then(|r| r.local) else {
-                    continue;
-                };
-                if l.kind != kind {
-                    // The name changed kind: the old node goes as missing,
-                    // and the folder is read again for the new one.
-                    self.missing.insert(n);
-                    seen.remove(&n);
-                    rescan_self = true;
-                    continue;
-                }
-                let row = local_row(n, Some(dir), &e.name, key, kind, &e.meta, &l);
-                if row != l {
-                    if row.hash.is_none() && kind == Kind::File {
-                        self.hash_queue.insert(n);
-                    }
-                    batch.push(Write::PutLocal(row));
-                    batch.push(Write::MarkDirty(n));
-                } else if kind == Kind::File && l.hash.is_none() {
-                    self.hash_queue.insert(n);
-                }
-                if kind == Kind::Folder && recursive {
-                    self.scan_queue.insert(n, true);
+            if let Some(parts) = view::path_strs(&child_path)
+                && self.ignore.is_ignored(&parts, kind == Kind::Folder)
+            {
+                // Ignored: never uploaded, never deleted (3.14). A node
+                // already held under this name is kept as it is.
+                if let Some(n) = by_key.get(&key) {
+                    seen.insert(*n);
                 }
                 continue;
             }
-            if let Some(c) = self.find_moved(env, dir, &e.meta, kind)? {
+            cands.push((e, key, kind));
+        }
+        // Then matching, in an order that follows identity before names, so
+        // the result does not depend on the order of the names: (rule 1)
+        // same name and same file id; (rule 3) a file id known elsewhere
+        // whose old place no longer holds it; (rule 2) same name, other file
+        // id, the node not claimed by a move; (rule 4) new.
+        let mut claimed: Vec<Option<NodeId>> = vec![None; cands.len()];
+        for (i, (e, key, kind)) in cands.iter().enumerate() {
+            if let Some(n) = by_key.get(key).copied()
+                && let Some(l) = self.store.node(n)?.and_then(|r| r.local)
+                && l.file_id == e.meta.file_id
+                && l.kind == *kind
+            {
+                claimed[i] = Some(n);
+                seen.insert(n);
+            }
+        }
+        for (i, (e, _, kind)) in cands.iter().enumerate() {
+            if claimed[i].is_some() {
+                continue;
+            }
+            if let Some(c) = self.find_moved(env, dir, &e.meta, *kind, &seen)? {
+                claimed[i] = Some(c);
                 seen.insert(c);
                 self.missing.remove(&c);
-                let Some(l) = self.store.node(c)?.and_then(|r| r.local) else {
-                    continue;
-                };
-                let row = local_row(c, Some(dir), &e.name, key, kind, &e.meta, &l);
-                if row.hash.is_none() && kind == Kind::File {
-                    self.hash_queue.insert(c);
-                }
-                batch.push(Write::PutLocal(row));
-                batch.push(Write::MarkDirty(c));
-                if kind == Kind::Folder && recursive {
-                    self.scan_queue.insert(c, true);
+            }
+        }
+        for (i, (_, key, _)) in cands.iter().enumerate() {
+            if claimed[i].is_none()
+                && let Some(n) = by_key.get(key).copied()
+                && !seen.contains(&n)
+            {
+                claimed[i] = Some(n);
+                seen.insert(n);
+            }
+        }
+        // A name here now held by an item that moved in: the node that held
+        // it is gone from this place, and lets go of the name in this batch
+        // (if it moved somewhere not yet read, it is found there as new:
+        // the plan's fallback, which costs a transfer, never data).
+        let mut freed = BTreeSet::new();
+        for (i, (_, key, _)) in cands.iter().enumerate() {
+            if let Some(x) = by_key.get(key).copied()
+                && claimed[i] != Some(x)
+                && !seen.contains(&x)
+                && !self.is_mount_root(x)?
+                && self.remove_local_subtree(x, &mut batch, &mut freed)?
+            {
+                seen.insert(x);
+                self.missing.remove(&x);
+            }
+        }
+        // Rows: nodes that move or are new take their names after every
+        // node that leaves a name here has let go of it.
+        let mut later = Vec::new();
+        for (i, (e, key, kind)) in cands.into_iter().enumerate() {
+            let Some(n) = claimed[i] else {
+                later.push((e, key, kind));
+                continue;
+            };
+            self.absent_roots.remove(&n);
+            let Some(l) = self.store.node(n)?.and_then(|r| r.local) else {
+                continue;
+            };
+            if l.kind != kind {
+                // The name changed kind (3.5, retype): the old node's local
+                // picture goes now, and the new item is a new node.
+                let mut removed = BTreeSet::new();
+                if self.remove_local_subtree(n, &mut batch, &mut removed)? {
+                    later.push((e, key, kind));
                 }
                 continue;
             }
+            let row = local_row(n, Some(dir), &e.name, key, kind, &e.meta, &l);
+            if row != l {
+                if row.hash.is_none() && kind == Kind::File {
+                    self.hash_queue.insert(n);
+                }
+                batch.push(Write::PutLocal(row));
+                batch.push(Write::MarkDirty(n));
+            } else if kind == Kind::File && l.hash.is_none() {
+                self.hash_queue.insert(n);
+            }
+            if kind == Kind::Folder && recursive {
+                self.scan_queue.insert(n, true);
+            }
+        }
+        for (e, key, kind) in later {
             // New. If a mount's root belongs exactly here and has no local
             // picture yet, this folder is that root.
             let mut node = None;
@@ -351,9 +395,6 @@ impl<S: Store> Engine<S> {
                 }
             }
         }
-        if rescan_self {
-            self.scan_queue.entry(dir).or_insert(false);
-        }
         self.commit(batch)?;
         Ok(())
     }
@@ -367,9 +408,10 @@ impl<S: Store> Engine<S> {
         dir: NodeId,
         meta: &Meta,
         kind: Kind,
+        claimed: &BTreeSet<NodeId>,
     ) -> EngineResult<Option<NodeId>> {
         for c in self.store.nodes_by_file_id(meta.file_id)? {
-            if Some(c) == self.root {
+            if Some(c) == self.root || claimed.contains(&c) {
                 continue;
             }
             let Some(l) = self.store.node(c)?.and_then(|r| r.local) else {
@@ -431,13 +473,17 @@ impl<S: Store> Engine<S> {
         dir: NodeId,
         meta: &Meta,
     ) -> EngineResult<bool> {
-        let kids = self.store.local_children(c)?;
-        let Some(first) = kids.first() else {
+        // The known children's file ids: any one of them inside the found
+        // folder (under any name: it may have been renamed too) will do.
+        let mut known = BTreeSet::new();
+        for k in self.store.local_children(c)? {
+            if let Some(kl) = self.store.node(k)?.and_then(|r| r.local) {
+                known.insert(kl.file_id);
+            }
+        }
+        if known.is_empty() {
             return Ok(false);
-        };
-        let Some(kl) = self.store.node(*first)?.and_then(|r| r.local) else {
-            return Ok(false);
-        };
+        }
         let Some(dir_path) = (if Some(dir) == self.root {
             Some(LocalPath::root())
         } else {
@@ -449,12 +495,11 @@ impl<S: Store> Engine<S> {
             return Ok(false);
         };
         for e in entries {
-            if e.meta.file_id == meta.file_id {
-                if let Ok(Some(m)) = env.fs.stat(&dir_path.join(&e.name).join(&kl.name)) {
-                    if m.file_id == kl.file_id {
-                        return Ok(true);
-                    }
-                }
+            if e.meta.file_id == meta.file_id
+                && let Ok(inside) = env.fs.list_dir(&dir_path.join(&e.name))
+                && inside.iter().any(|x| known.contains(&x.meta.file_id))
+            {
+                return Ok(true);
             }
         }
         Ok(false)

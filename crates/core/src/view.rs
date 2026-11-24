@@ -211,10 +211,10 @@ pub fn exclusion(
         if let Some(p) = r.local.as_ref().and_then(|l| l.parent) {
             stack.push(p);
         }
-        if let Some(p) = r.remote.as_ref().and_then(|x| x.parent.clone()) {
-            if let Some(pn) = store.node_by_remote(&p)? {
-                stack.push(pn);
-            }
+        if let Some(p) = r.remote.as_ref().and_then(|x| x.parent.clone())
+            && let Some(pn) = store.node_by_remote(&p)?
+        {
+            stack.push(pn);
         }
     }
     Ok(Exclusion::None)

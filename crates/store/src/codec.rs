@@ -70,7 +70,7 @@ fn fid_of(volume: i64, b: Vec<u8>) -> StoreResult<FileId> {
 // ----- mount -----
 
 /// The columns read for a mount.
-pub const MOUNT_COLS: &str = "id, kind, storage, epoch, root_remote, root_node, local_path, perms, trash, versions, prompt_ask, selected, cursor, listing_reason, listing_page, listing_cursor, listing_generation, caught_up, caught_up_round";
+pub(crate) const MOUNT_COLS: &str = "id, kind, storage, epoch, root_remote, root_node, local_path, perms, trash, versions, prompt_ask, selected, cursor, listing_reason, listing_page, listing_cursor, listing_generation, caught_up, caught_up_round";
 
 fn mount_kind_code(k: MountKind) -> i64 {
     match k {
@@ -129,7 +129,7 @@ fn path_parts(b: Vec<u8>) -> StoreResult<Vec<String>> {
 }
 
 /// Writes a mount.
-pub fn put_mount(tx: &Transaction<'_>, m: &MountRow) -> StoreResult<()> {
+pub(crate) fn put_mount(tx: &Transaction<'_>, m: &MountRow) -> StoreResult<()> {
     let l = m.listing.as_ref();
     tx.prepare_cached(&format!(
         "INSERT OR REPLACE INTO mount({MOUNT_COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)"
@@ -161,7 +161,7 @@ pub fn put_mount(tx: &Transaction<'_>, m: &MountRow) -> StoreResult<()> {
 }
 
 /// Reads a mount.
-pub fn read_mount(r: &Row<'_>) -> rusqlite::Result<StoreResult<MountRow>> {
+pub(crate) fn read_mount(r: &Row<'_>) -> rusqlite::Result<StoreResult<MountRow>> {
     let id: String = r.get(0)?;
     let kind: i64 = r.get(1)?;
     let storage: String = r.get(2)?;
@@ -215,7 +215,7 @@ pub fn read_mount(r: &Row<'_>) -> rusqlite::Result<StoreResult<MountRow>> {
 // ----- remote -----
 
 /// The columns read for a remote picture.
-pub const REMOTE_COLS: &str = "node, remote_id, mount, parent, name, is_dir, size, mtime_us, etag, hash, exec, seq, crypt, departed, listed";
+pub(crate) const REMOTE_COLS: &str = "node, remote_id, mount, parent, name, is_dir, size, mtime_us, etag, hash, exec, seq, crypt, departed, listed";
 
 fn crypt_code(c: Crypt) -> i64 {
     match c {
@@ -235,7 +235,7 @@ fn crypt_of(c: i64) -> StoreResult<Crypt> {
 }
 
 /// Writes a remote picture.
-pub fn put_remote(tx: &Transaction<'_>, x: &RemoteRow) -> StoreResult<()> {
+pub(crate) fn put_remote(tx: &Transaction<'_>, x: &RemoteRow) -> StoreResult<()> {
     tx.prepare_cached(&format!(
         "INSERT INTO remote({REMOTE_COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
          ON CONFLICT(node) DO UPDATE SET remote_id = excluded.remote_id, mount = excluded.mount,
@@ -267,7 +267,7 @@ pub fn put_remote(tx: &Transaction<'_>, x: &RemoteRow) -> StoreResult<()> {
 }
 
 /// Reads a remote picture.
-pub fn read_remote(r: &Row<'_>) -> rusqlite::Result<StoreResult<RemoteRow>> {
+pub(crate) fn read_remote(r: &Row<'_>) -> rusqlite::Result<StoreResult<RemoteRow>> {
     let kind = kind_of(r.get(5)?);
     let hash = hash_of(r.get(9)?);
     let crypt = crypt_of(r.get(12)?);
@@ -307,11 +307,11 @@ pub fn read_remote(r: &Row<'_>) -> rusqlite::Result<StoreResult<RemoteRow>> {
 // ----- local -----
 
 /// The columns read for a local picture.
-pub const LOCAL_COLS: &str =
+pub(crate) const LOCAL_COLS: &str =
     "node, parent, name, name_key, is_dir, volume, file_id, size, mtime_ns, ctime_ns, exec, hash";
 
 /// Writes a local picture.
-pub fn put_local(tx: &Transaction<'_>, x: &LocalRow) -> StoreResult<()> {
+pub(crate) fn put_local(tx: &Transaction<'_>, x: &LocalRow) -> StoreResult<()> {
     tx.prepare_cached(&format!(
         "INSERT INTO local({LOCAL_COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
          ON CONFLICT(node) DO UPDATE SET parent = excluded.parent, name = excluded.name,
@@ -339,7 +339,7 @@ pub fn put_local(tx: &Transaction<'_>, x: &LocalRow) -> StoreResult<()> {
 }
 
 /// Reads a local picture.
-pub fn read_local(r: &Row<'_>) -> rusqlite::Result<StoreResult<LocalRow>> {
+pub(crate) fn read_local(r: &Row<'_>) -> rusqlite::Result<StoreResult<LocalRow>> {
     let node: i64 = r.get(0)?;
     let parent: Option<i64> = r.get(1)?;
     let name: Vec<u8> = r.get(2)?;
@@ -371,10 +371,10 @@ pub fn read_local(r: &Row<'_>) -> rusqlite::Result<StoreResult<LocalRow>> {
 // ----- synced -----
 
 /// The columns read for a base.
-pub const SYNCED_COLS: &str = "node, parent, name, is_dir, size, hash, remote_etag, local_volume, local_file_id, local_mtime_ns, exec";
+pub(crate) const SYNCED_COLS: &str = "node, parent, name, is_dir, size, hash, remote_etag, local_volume, local_file_id, local_mtime_ns, exec";
 
 /// Writes a base.
-pub fn put_synced(tx: &Transaction<'_>, x: &SyncedRow) -> StoreResult<()> {
+pub(crate) fn put_synced(tx: &Transaction<'_>, x: &SyncedRow) -> StoreResult<()> {
     tx.prepare_cached(&format!(
         "INSERT OR REPLACE INTO synced({SYNCED_COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
     ))
@@ -397,7 +397,7 @@ pub fn put_synced(tx: &Transaction<'_>, x: &SyncedRow) -> StoreResult<()> {
 }
 
 /// Reads a base.
-pub fn read_synced(r: &Row<'_>) -> rusqlite::Result<StoreResult<SyncedRow>> {
+pub(crate) fn read_synced(r: &Row<'_>) -> rusqlite::Result<StoreResult<SyncedRow>> {
     let node: i64 = r.get(0)?;
     let parent: Option<i64> = r.get(1)?;
     let name: String = r.get(2)?;
@@ -427,7 +427,7 @@ pub fn read_synced(r: &Row<'_>) -> rusqlite::Result<StoreResult<SyncedRow>> {
 // ----- op and transfer -----
 
 /// The columns read for an operation.
-pub const OP_COLS: &str = "id, kind, node, state, attempt, next_try_ns, cond_kind, cond_text, cond_hash, cond_seq, target_parent, target_name, expect_hash, created_ns";
+pub(crate) const OP_COLS: &str = "id, kind, node, state, attempt, next_try_ns, cond_kind, cond_text, cond_hash, cond_seq, target_parent, target_name, expect_hash, created_ns";
 
 /// A condition as (kind, text, hash, seq) columns.
 fn cond_cols(c: &Option<Condition>) -> (Option<i64>, Option<String>, Option<Vec<u8>>, Option<i64>) {
@@ -467,7 +467,7 @@ fn cond_of(
 }
 
 /// Writes an operation.
-pub fn put_op(tx: &Transaction<'_>, o: &OpRow) -> StoreResult<()> {
+pub(crate) fn put_op(tx: &Transaction<'_>, o: &OpRow) -> StoreResult<()> {
     let (ck, ct, ch, cs) = cond_cols(&o.condition);
     tx.prepare_cached(&format!(
         "INSERT OR REPLACE INTO op({OP_COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)"
@@ -494,7 +494,7 @@ pub fn put_op(tx: &Transaction<'_>, o: &OpRow) -> StoreResult<()> {
 }
 
 /// Reads an operation.
-pub fn read_op(r: &Row<'_>) -> rusqlite::Result<StoreResult<OpRow>> {
+pub(crate) fn read_op(r: &Row<'_>) -> rusqlite::Result<StoreResult<OpRow>> {
     let id: i64 = r.get(0)?;
     let kind: i64 = r.get(1)?;
     let node: i64 = r.get(2)?;
@@ -524,11 +524,11 @@ pub fn read_op(r: &Row<'_>) -> rusqlite::Result<StoreResult<OpRow>> {
 }
 
 /// The columns read for a transfer.
-pub const TRANSFER_COLS: &str =
+pub(crate) const TRANSFER_COLS: &str =
     "op, temp, upload_id, total, chunk_size, done, expect_etag, new_volume, new_file_id, aside";
 
 /// Writes a transfer.
-pub fn put_transfer(tx: &Transaction<'_>, t: &TransferRow) -> StoreResult<()> {
+pub(crate) fn put_transfer(tx: &Transaction<'_>, t: &TransferRow) -> StoreResult<()> {
     tx.prepare_cached(&format!(
         "INSERT OR REPLACE INTO transfer({TRANSFER_COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
     ))
@@ -550,7 +550,7 @@ pub fn put_transfer(tx: &Transaction<'_>, t: &TransferRow) -> StoreResult<()> {
 }
 
 /// Reads a transfer.
-pub fn read_transfer(r: &Row<'_>) -> rusqlite::Result<StoreResult<TransferRow>> {
+pub(crate) fn read_transfer(r: &Row<'_>) -> rusqlite::Result<StoreResult<TransferRow>> {
     let op: i64 = r.get(0)?;
     let temp: Option<Vec<u8>> = r.get(1)?;
     let upload: Option<String> = r.get(2)?;
@@ -583,15 +583,16 @@ pub fn read_transfer(r: &Row<'_>) -> rusqlite::Result<StoreResult<TransferRow>> 
 // ----- problem, held, conflict -----
 
 /// The columns read for a problem.
-pub const PROBLEM_COLS: &str = "subject_kind, subject, kind, reason, first_ns, last_ns, count";
+pub(crate) const PROBLEM_COLS: &str =
+    "subject_kind, subject, kind, reason, first_ns, last_ns, count";
 
 /// A node subject's key bytes.
-pub fn node_subject(n: NodeId) -> Vec<u8> {
+pub(crate) fn node_subject(n: NodeId) -> Vec<u8> {
     n.0.to_be_bytes().to_vec()
 }
 
 /// A subject as (kind, key) columns.
-pub fn subject_cols(s: &Subject) -> (i64, Vec<u8>) {
+pub(crate) fn subject_cols(s: &Subject) -> (i64, Vec<u8>) {
     match s {
         Subject::Node(n) => (0, node_subject(*n)),
         Subject::Path(p) => (1, p.encode()),
@@ -599,7 +600,7 @@ pub fn subject_cols(s: &Subject) -> (i64, Vec<u8>) {
 }
 
 /// Writes a problem.
-pub fn put_problem(tx: &Transaction<'_>, p: &ProblemRow) -> StoreResult<()> {
+pub(crate) fn put_problem(tx: &Transaction<'_>, p: &ProblemRow) -> StoreResult<()> {
     let (k, b) = subject_cols(&p.subject);
     tx.prepare_cached(&format!(
         "INSERT OR REPLACE INTO problem({PROBLEM_COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
@@ -619,7 +620,7 @@ pub fn put_problem(tx: &Transaction<'_>, p: &ProblemRow) -> StoreResult<()> {
 }
 
 /// Reads a problem.
-pub fn read_problem(r: &Row<'_>) -> rusqlite::Result<StoreResult<ProblemRow>> {
+pub(crate) fn read_problem(r: &Row<'_>) -> rusqlite::Result<StoreResult<ProblemRow>> {
     let sk: i64 = r.get(0)?;
     let sb: Vec<u8> = r.get(1)?;
     let kind: i64 = r.get(2)?;
@@ -648,7 +649,7 @@ pub fn read_problem(r: &Row<'_>) -> rusqlite::Result<StoreResult<ProblemRow>> {
 }
 
 /// The columns read for a holding-area entry.
-pub const HELD_COLS: &str = "id, original, held, hash, size, reason, basis, mount, at_ns";
+pub(crate) const HELD_COLS: &str = "id, original, held, hash, size, reason, basis, mount, at_ns";
 
 fn held_reason_code(r: HeldReason) -> i64 {
     match r {
@@ -691,7 +692,7 @@ fn basis_of(c: i64) -> StoreResult<PurgeBasis> {
 }
 
 /// Writes a holding-area entry.
-pub fn put_held(tx: &Transaction<'_>, h: &HeldRow) -> StoreResult<()> {
+pub(crate) fn put_held(tx: &Transaction<'_>, h: &HeldRow) -> StoreResult<()> {
     tx.prepare_cached(&format!(
         "INSERT OR REPLACE INTO held({HELD_COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
     ))
@@ -712,7 +713,7 @@ pub fn put_held(tx: &Transaction<'_>, h: &HeldRow) -> StoreResult<()> {
 }
 
 /// Reads a holding-area entry.
-pub fn read_held(r: &Row<'_>) -> rusqlite::Result<StoreResult<HeldRow>> {
+pub(crate) fn read_held(r: &Row<'_>) -> rusqlite::Result<StoreResult<HeldRow>> {
     let id: i64 = r.get(0)?;
     let original: Vec<u8> = r.get(1)?;
     let held: Vec<u8> = r.get(2)?;
@@ -738,10 +739,10 @@ pub fn read_held(r: &Row<'_>) -> rusqlite::Result<StoreResult<HeldRow>> {
 }
 
 /// The columns read for a conflict record.
-pub const CONFLICT_COLS: &str = "id, node, copy, hash, name, at_ns";
+pub(crate) const CONFLICT_COLS: &str = "id, node, copy, hash, name, at_ns";
 
 /// Writes a conflict record.
-pub fn put_conflict(tx: &Transaction<'_>, c: &ConflictRow) -> StoreResult<()> {
+pub(crate) fn put_conflict(tx: &Transaction<'_>, c: &ConflictRow) -> StoreResult<()> {
     tx.prepare_cached(&format!(
         "INSERT OR REPLACE INTO conflict({CONFLICT_COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
     ))
@@ -759,7 +760,7 @@ pub fn put_conflict(tx: &Transaction<'_>, c: &ConflictRow) -> StoreResult<()> {
 }
 
 /// Reads a conflict record.
-pub fn read_conflict(r: &Row<'_>) -> rusqlite::Result<StoreResult<ConflictRow>> {
+pub(crate) fn read_conflict(r: &Row<'_>) -> rusqlite::Result<StoreResult<ConflictRow>> {
     let id: i64 = r.get(0)?;
     let node: i64 = r.get(1)?;
     let copy: i64 = r.get(2)?;

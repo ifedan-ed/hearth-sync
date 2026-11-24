@@ -82,13 +82,13 @@ pub struct FakeRemote {
 }
 
 fn api(status: u16, code: &str, details: Details) -> RemoteError {
-    RemoteError::Api(ApiError {
+    RemoteError::Api(Box::new(ApiError {
         status,
         code: ErrorCode::parse(code, status),
         message: code.to_owned(),
         details,
         retry_after_s: None,
-    })
+    }))
 }
 
 impl Default for FakeRemote {
@@ -330,10 +330,10 @@ impl FakeRemote {
             let seq = self.bump();
             let etag = self.new_etag();
             if let Some(e) = self.entries.get_mut(&id) {
-                if let Some(old) = e.hash {
-                    if old != h {
-                        self.kept.insert(old);
-                    }
+                if let Some(old) = e.hash
+                    && old != h
+                {
+                    self.kept.insert(old);
                 }
                 e.content = body.to_vec();
                 e.hash = Some(h);
@@ -367,6 +367,13 @@ impl FakeRemote {
             if let Some(e) = self.entries.remove(&x) {
                 if let Some(h) = e.hash {
                     self.kept.insert(h);
+                }
+                // An entry inside may be held elsewhere by a client that
+                // never saw it move in: every entry below gets its own
+                // marker (docs/contract-questions.md Q6). Extra markers are
+                // harmless (6.6 rule 6).
+                if x != id {
+                    self.markers.push((seq, x, GoneReason::Trashed));
                 }
             }
         }
@@ -624,7 +631,7 @@ impl Remote for FakeRemote {
                 items.push((e.seq, 1, Change::Upsert(self.entry_of(e))));
             }
         }
-        items.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+        items.sort_by_key(|a| (a.0, a.1));
         let limit = limit.max(1) as usize;
         let mut out = Vec::new();
         let mut last = from;
@@ -931,10 +938,7 @@ impl Remote for FakeRemote {
             if perms & 8 == 0 {
                 return Err(api(403, "no_permission", Details::default()));
             }
-            let since = match s.cursor_seq(unchanged_since) {
-                Ok(x) => x,
-                Err(_) => 0,
-            };
+            let since = s.cursor_seq(unchanged_since).unwrap_or_default();
             let changed = s.below(i).iter().any(|x| s.entries[x].seq > since);
             if changed {
                 let mut d = s.details_entry(i);

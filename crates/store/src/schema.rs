@@ -17,10 +17,10 @@ use hearth_sync_core::store::{StoreError, StoreResult};
 use crate::sql_err;
 
 /// The schema this build writes.
-pub const CURRENT: i64 = 1;
+pub(crate) const CURRENT: i64 = 1;
 
 /// The settings of 3.2, each explicit.
-pub fn configure(conn: &Connection) -> StoreResult<()> {
+pub(crate) fn configure(conn: &Connection) -> StoreResult<()> {
     // WAL: readers (the app, a file provider extension) beside the writer.
     let mode: String = conn
         .query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))
@@ -204,7 +204,7 @@ CREATE TABLE unselected(node INTEGER PRIMARY KEY);
 ";
 
 /// Brings the database to the current schema, one version at a time.
-pub fn migrate(conn: &Connection) -> StoreResult<()> {
+pub(crate) fn migrate(conn: &Connection) -> StoreResult<()> {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(sql_err)?;

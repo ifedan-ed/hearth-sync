@@ -330,11 +330,11 @@ impl<S: Store> Engine<S> {
     /// Lets a paused mass change go on: exactly the plan whose token is
     /// given (from `PauseReason::MassChange`).
     pub fn approve_mass_change(&mut self, token: u64) {
-        if let Some(PauseReason::MassChange(v)) = &self.pause {
-            if v.token == token {
-                self.mass_approved = Some(token);
-                self.pause = None;
-            }
+        if let Some(PauseReason::MassChange(v)) = &self.pause
+            && v.token == token
+        {
+            self.mass_approved = Some(token);
+            self.pause = None;
         }
     }
 
@@ -455,6 +455,13 @@ impl<S: Store> Engine<S> {
                 }
                 Write::DelOp(_) => {
                     targets.insert(crate::store::WAIT_ANY);
+                }
+                // A node listed as a problem will not move: those waiting
+                // for it decide again (they become problems themselves).
+                Write::PutProblem(p) => {
+                    if let crate::tree::Subject::Node(n) = p.subject {
+                        targets.insert(n);
+                    }
                 }
                 _ => {}
             }
@@ -627,10 +634,10 @@ impl<S: Store> Engine<S> {
             self.next_problem_retry_ns = Some(now + secs(self.cfg.problem_retry_s));
             let mut b = Vec::new();
             for p in self.store.problems()? {
-                if let Subject::Node(n) = p.subject {
-                    if self.store.node(n)?.is_some() {
-                        b.push(Write::MarkDirty(n));
-                    }
+                if let Subject::Node(n) = p.subject
+                    && self.store.node(n)?.is_some()
+                {
+                    b.push(Write::MarkDirty(n));
                 }
             }
             self.commit(b)?;

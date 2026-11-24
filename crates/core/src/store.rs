@@ -303,17 +303,16 @@ pub fn check_consistency(store: &dyn Store) -> StoreResult<Vec<String>> {
                 cur = store.node(p)?.and_then(|r| r.local).and_then(|l| l.parent);
             }
         }
-        if let Some(s) = &rec.synced {
-            if let Some(p) = s.parent {
-                if store.node(p)?.is_none() {
-                    bad.push(format!("{n}: base parent {p} missing"));
-                }
-            }
+        if let Some(s) = &rec.synced
+            && let Some(p) = s.parent
+            && store.node(p)?.is_none()
+        {
+            bad.push(format!("{n}: base parent {p} missing"));
         }
-        if let Some(r) = &rec.remote {
-            if store.node_by_remote(&r.id)? != Some(n) {
-                bad.push(format!("{n}: remote id {} not indexed", r.id));
-            }
+        if let Some(r) = &rec.remote
+            && store.node_by_remote(&r.id)? != Some(n)
+        {
+            bad.push(format!("{n}: remote id {} not indexed", r.id));
         }
     }
     for op in store.ops()? {

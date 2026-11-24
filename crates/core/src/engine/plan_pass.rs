@@ -55,6 +55,7 @@ impl<S: Store> Engine<S> {
                 in_flight,
                 &self.split_deletes,
                 name_max,
+                &self.with_problem,
                 root,
                 &next_node,
             );
@@ -302,10 +303,10 @@ impl<S: Store> Engine<S> {
                 Ok(()) | Err(crate::fs::FsError::NotFound) => {}
                 Err(_) => continue,
             }
-            if let Some(dir) = h.held.parent() {
-                if dir != layout::held_root() {
-                    let _ = env.fs.remove_empty_dir(&dir);
-                }
+            if let Some(dir) = h.held.parent()
+                && dir != layout::held_root()
+            {
+                let _ = env.fs.remove_empty_dir(&dir);
             }
             self.commit(vec![Write::DelHeld(h.id)])?;
             return Ok(true);

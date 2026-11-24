@@ -60,10 +60,10 @@ impl<'a> Overlay<'a> {
         }
         let mut v = Vec::new();
         for n in out {
-            if let Some(rec) = self.node(n)? {
-                if rec.remote.as_ref().and_then(|r| r.parent.as_ref()) == Some(parent) {
-                    v.push(n);
-                }
+            if let Some(rec) = self.node(n)?
+                && rec.remote.as_ref().and_then(|r| r.parent.as_ref()) == Some(parent)
+            {
+                v.push(n);
             }
         }
         Ok(v)

@@ -141,6 +141,9 @@ pub struct Planner<'a> {
     pub split_deletes: &'a BTreeSet<NodeId>,
     /// Hearth's longest name.
     pub name_bytes_max: usize,
+    /// Nodes listed as problems (they will not move until something
+    /// changes).
+    pub problems: &'a BTreeSet<NodeId>,
     /// The sync root's node.
     pub root: NodeId,
     /// The next node id to give (for splits); the engine stores it after.
@@ -161,6 +164,7 @@ impl<'a> Planner<'a> {
         in_flight: BTreeSet<NodeId>,
         split_deletes: &'a BTreeSet<NodeId>,
         name_bytes_max: usize,
+        problems: &'a BTreeSet<NodeId>,
         root: NodeId,
         next_node: &'a Cell<u64>,
     ) -> Planner<'a> {
@@ -174,6 +178,7 @@ impl<'a> Planner<'a> {
             in_flight: RefCell::new(in_flight),
             split_deletes,
             name_bytes_max,
+            problems,
             root,
             next_node,
             deletable: RefCell::new(BTreeMap::new()),
@@ -258,14 +263,12 @@ impl<'a> Planner<'a> {
         }
         // A local move into another mount's folder: that is a copy there and
         // a delete here (4.3), so the local picture becomes a new node.
-        if let (Some(l), Some(_)) = (&rec.local, &rec.synced) {
-            if let Some(p) = l.parent {
-                if let Some(prec) = self.store.node(p)? {
-                    if prec.mount != rec.mount {
-                        return self.split_local(&rec);
-                    }
-                }
-            }
+        if let (Some(l), Some(_)) = (&rec.local, &rec.synced)
+            && let Some(p) = l.parent
+            && let Some(prec) = self.store.node(p)?
+            && prec.mount != rec.mount
+        {
+            return self.split_local(&rec);
         }
         match &rec.synced {
             Some(s) => self.plan_with_base(&rec, s, mount),
@@ -941,24 +944,92 @@ impl<'a> Planner<'a> {
             return Ok(Target::Instead(self.pair(&orec, rec, rec.node)?));
         }
         let o_name = self.local_place(&orec).map(|p| p.name);
+        if self.problems.contains(&o) {
+            // Its holder cannot move (it is listed): this one cannot either.
+            return Ok(Target::Instead(Decision::Problem(
+                ProblemKind::NameClash,
+                format!(
+                    "the name is held on this device by {:?}, which cannot sync",
+                    o_name.unwrap_or_default()
+                ),
+            )));
+        }
         if o_name.as_deref() == Some(place.name.as_str()) {
             // The holder has exactly this name: it leaves, steps aside or
-            // pairs by its own decision.
-            return Ok(Target::Wait(Some(o)));
+            // pairs by its own decision; unless the two (or more) wait for
+            // each other's places (Hearth swapped them).
+            return self.wait_or_break_cycle(rec, o);
         }
         // One name on this device, two on Hearth (case or normalisation).
         let o_stays = o_local_only || self.local_place(&orec) == self.remote_place(&orec)?;
-        Ok(if o_stays {
-            Target::Instead(Decision::Problem(
+        if o_stays {
+            return Ok(Target::Instead(Decision::Problem(
                 ProblemKind::NameClash,
                 format!(
                     "name clash on this device with {:?}",
                     o_name.unwrap_or_default()
                 ),
-            ))
-        } else {
-            Target::Wait(Some(o))
-        })
+            )));
+        }
+        self.wait_or_break_cycle(rec, o)
+    }
+
+    /// The node whose local place a node wants to move into, when it wants
+    /// to move locally (its place on Hearth differs from the disk's).
+    fn local_blocker(&self, n: NodeId) -> StoreResult<Option<NodeId>> {
+        let Some(rec) = self.store.node(n)? else {
+            return Ok(None);
+        };
+        let (Some(lp), Some(rp)) = (self.local_place(&rec), self.remote_place(&rec)?) else {
+            return Ok(None);
+        };
+        let (true, Some(parent)) = (lp != rp, rp.parent) else {
+            return Ok(None);
+        };
+        let key = key_of_str(&rp.name, &self.cfg.volume);
+        Ok(self
+            .store
+            .local_child_by_key(parent, &key)?
+            .filter(|o| *o != n))
+    }
+
+    /// Waits for the holder of a name, unless the holders wait for each
+    /// other in a circle (Hearth swapped two names, or rotated several):
+    /// then the lowest node of the circle first moves to a parking name in
+    /// its own folder, which frees its place and breaks the circle. The
+    /// parking name is an ordinary visible name; the next pass moves the
+    /// node on to Hearth's place (Hearth's place wins, C), so it is never
+    /// uploaded.
+    fn wait_or_break_cycle(&self, rec: &NodeRecord, o: NodeId) -> StoreResult<Target> {
+        let me = rec.node;
+        let mut cycle = vec![me, o];
+        let mut cur = o;
+        for _ in 0..64 {
+            match self.local_blocker(cur)? {
+                Some(next) if next == me => {
+                    if cycle.iter().min() == Some(&me) {
+                        let Some(l) = &rec.local else {
+                            return Ok(Target::Wait(Some(o)));
+                        };
+                        let park = Place {
+                            parent: l.parent,
+                            name: format!(".moving-{}", me.0),
+                        };
+                        return Ok(Target::Instead(Decision::Op(
+                            PlannedOp::new(OpKind::MoveLocal).to(&park),
+                        )));
+                    }
+                    return Ok(Target::Wait(Some(o)));
+                }
+                Some(next) if cycle.contains(&next) => break,
+                Some(next) => {
+                    cycle.push(next);
+                    cur = next;
+                }
+                None => break,
+            }
+        }
+        Ok(Target::Wait(Some(o)))
     }
 
     /// Checks a place on Hearth for a node to be put at: the folder exists
@@ -1006,10 +1077,35 @@ impl<'a> Planner<'a> {
             if o_remote_only && me_local_only {
                 return Ok(Target::Instead(self.pair(rec, &orec, rec.node)?));
             }
+            // A new local folder where Hearth has a folder that is gone from
+            // the disk: most likely the same folder, found again (moved and
+            // its contents renamed). Folders merge (3.5, creations), which
+            // also spares the delete of the old one waiting on its children.
+            if me_local_only
+                && orec.local.is_none()
+                && or.kind == Kind::Folder
+                && rec.local.as_ref().is_some_and(|l| l.kind == Kind::Folder)
+                && !self.busy(&o)
+            {
+                return Ok(Target::Instead(Decision::Record(self.merge(rec, &orec)?)));
+            }
+            // Its holder cannot move (it is listed): this one cannot either.
+            if self.problems.contains(&o) {
+                return Ok(Target::Instead(Decision::Problem(
+                    ProblemKind::NameClash,
+                    "the name is held on Hearth by an item that cannot sync".into(),
+                )));
+            }
             // Will the holder leave Hearth's name? It does when its local
             // side moved away or is gone (and it is unchanged on Hearth).
             let o_leaves = match (&orec.local, &orec.synced) {
-                (Some(_), Some(_)) => self.local_place(&orec) != self.remote_place(&orec)?,
+                // It leaves only if Hearth still has it where the base
+                // does and the disk moved it away. If Hearth itself put it
+                // at this name, Hearth's place wins and it stays.
+                (Some(_), Some(_)) => {
+                    let base = view::base_place(&orec);
+                    self.remote_place(&orec)? == base && self.local_place(&orec) != base
+                }
                 (None, Some(os)) => match or.kind {
                     Kind::File => or.hash == os.hash,
                     Kind::Folder => true,
@@ -1199,10 +1295,10 @@ impl<'a> Planner<'a> {
         if let Some(c) = self.store.synced_children(rec.node)?.first() {
             return Ok(Decision::Wait(Some(*c)));
         }
-        if let Some(r) = &rec.remote {
-            if let Some(c) = self.store.remote_children(&r.id)?.first() {
-                return Ok(Decision::Wait(Some(*c)));
-            }
+        if let Some(r) = &rec.remote
+            && let Some(c) = self.store.remote_children(&r.id)?.first()
+        {
+            return Ok(Decision::Wait(Some(*c)));
         }
         Ok(Decision::Record(vec![Write::DelNode(rec.node)]))
     }

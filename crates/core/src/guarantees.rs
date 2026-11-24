@@ -74,10 +74,11 @@ pub fn i2_no_unsynced_overwrite(
     let after_hashes: BTreeSet<Hash> = after.iter().map(|f| f.hash).collect();
     let mut synced: BTreeSet<Hash> = BTreeSet::new();
     for n in &before_obs.nodes {
-        if let (Some(l), Some(s)) = (&n.local, &n.synced) {
-            if l.hash.is_some() && l.hash == s.hash {
-                synced.extend(l.hash);
-            }
+        if let (Some(l), Some(s)) = (&n.local, &n.synced)
+            && l.hash.is_some()
+            && l.hash == s.hash
+        {
+            synced.extend(l.hash);
         }
     }
     before

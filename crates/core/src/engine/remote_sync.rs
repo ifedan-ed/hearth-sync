@@ -415,20 +415,21 @@ impl<S: Store> Engine<S> {
             let Some(rec) = self.store.node(n)? else {
                 continue;
             };
-            if let Some(r) = &rec.remote {
-                if r.mount == m.id && r.listed != listing.generation {
-                    match listing.reason {
-                        ListReason::Relist => {
-                            let mut r2 = r.clone();
-                            r2.departed = Some(round);
-                            w.push(Write::PutRemote(r2));
-                        }
-                        ListReason::First | ListReason::Retention | ListReason::Untrusted => {
-                            w.push(Write::DelRemote(n));
-                        }
+            if let Some(r) = &rec.remote
+                && r.mount == m.id
+                && r.listed != listing.generation
+            {
+                match listing.reason {
+                    ListReason::Relist => {
+                        let mut r2 = r.clone();
+                        r2.departed = Some(round);
+                        w.push(Write::PutRemote(r2));
                     }
-                    w.push(Write::MarkDirty(n));
+                    ListReason::First | ListReason::Retention | ListReason::Untrusted => {
+                        w.push(Write::DelRemote(n));
+                    }
                 }
+                w.push(Write::MarkDirty(n));
             }
             if listing.reason == ListReason::Untrusted && rec.synced.is_some() {
                 w.push(Write::DelSynced(n));
@@ -650,12 +651,12 @@ impl<S: Store> Engine<S> {
                         ov.push(Write::MarkDirty(n));
                     }
                     Some(r) => {
-                        if let Some(g) = listed {
-                            if r.listed != g {
-                                let mut same = r.clone();
-                                same.listed = g;
-                                ov.put_remote(same)?;
-                            }
+                        if let Some(g) = listed
+                            && r.listed != g
+                        {
+                            let mut same = r.clone();
+                            same.listed = g;
+                            ov.put_remote(same)?;
                         }
                     }
                     None => {

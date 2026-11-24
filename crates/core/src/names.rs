@@ -351,15 +351,15 @@ pub fn hold_refusal(name: &str, rules: &VolumeRules, at_root: bool) -> Option<Ho
     if name.contains('/') || name.contains('\0') {
         return Some(HoldRefusal::Character);
     }
-    if let Some(max) = rules.max_name_bytes {
-        if name.len() > max {
-            return Some(HoldRefusal::TooLong);
-        }
+    if let Some(max) = rules.max_name_bytes
+        && name.len() > max
+    {
+        return Some(HoldRefusal::TooLong);
     }
-    if let Some(max) = rules.max_name_utf16 {
-        if name.encode_utf16().count() > max {
-            return Some(HoldRefusal::TooLong);
-        }
+    if let Some(max) = rules.max_name_utf16
+        && name.encode_utf16().count() > max
+    {
+        return Some(HoldRefusal::TooLong);
     }
     if rules.windows_names {
         if name
@@ -453,7 +453,7 @@ pub fn conflict_name(
     number: u32,
     max_bytes: usize,
 ) -> Option<String> {
-    let (stem, ext) = split_extension(original);
+    let (mut stem, mut ext) = split_extension(original);
     let n = if number > 1 {
         format!(" {number}")
     } else {
@@ -463,6 +463,12 @@ pub fn conflict_name(
         " (conflict {device}, {}{n})",
         format_local_time(local_time_s)
     );
+    // An "extension" so long that the marker cannot fit beside it is not
+    // an extension anyone relies on: the whole name is then the stem.
+    if marker.len() + ext.len() > max_bytes {
+        stem = original;
+        ext = "";
+    }
     let fixed = marker.len() + ext.len();
     if fixed > max_bytes {
         return None;
