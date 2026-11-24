@@ -2,6 +2,19 @@
 
 Newest first. What was done, what is half done, what is next.
 
+## 2026-11-24: documentation catch-up (docs only)
+
+- README: the status and "What exists" now name the reference model and
+  say which crates are still placeholders; `ci/cargo.sh`'s settings and
+  the random tests' settings listed.
+- AGENTS.md: the standing rule (README, AGENTS.md and the roadmap in
+  every merge; the roadmap is the Hearth repository's), helpers'
+  worktrees and small rebased merges, the mirror run by the coordinator
+  only, scratch on disk.
+- Seen, not changed: `CONTRACT` pins the contract before its changelog
+  entry "2026-11-24 (b)" (the answers to Q1 to Q6); `ci/cargo.sh` does
+  not pass `MODEL_SEEDS` and `MODEL_FIRST_SEED` into its container.
+
 ## 2026-11-24: the reference model and the checkers (sync-model)
 
 Done:

@@ -6,9 +6,10 @@ for the desktop client (Windows, macOS, Linux), a command-line client for
 servers, and the phone app with its file providers.
 
 Status: early. The core (the engine's state machine, planner and
-executor) and its state database exist and are tested against a fake disk
-and a fake Hearth. There is no real file system or HTTP code yet, so it
-does not sync real folders yet.
+executor), its state database and the reference model with its checkers
+exist. The core is tested against a fake disk and a fake Hearth; the
+simulator that runs it against the model is being built. There is no real
+file system or HTTP code yet, so it does not sync real folders yet.
 
 ## What it is built to do
 
@@ -64,10 +65,19 @@ kept with the server. `CONTRACT` names the version this code implements.
   randomness, scheduling) is an interface, so a run replays from a seed.
 - `crates/store`: the state database on SQLite (WAL, full fsync), with
   the same contract as the in-memory store the simulator uses.
+- `crates/model`: the reference model and one checker per guarantee,
+  with a seeded scenario generator, a plain-text scenario format and a
+  shrinker (see Checking it). It depends on no other crate here.
+- `crates/fs`, `crates/remote`, `crates/sim`, `crates/cli`, `crates/ffi`
+  and `crates/desktop` are placeholders so far.
+- `docs/model.md`: the model's rules, the scenario format, open findings.
+- `docs/model-needs.md`: what a runner must observe for the checkers.
 - `docs/observation.md`: what checkers and the simulator can observe.
 - `docs/core-design.md`: how the core is arranged and why.
 - `docs/performance.md`: measured figures against the budgets.
 - `docs/contract-questions.md`: open questions about the sync API.
+- `docs/decisions.md` and `docs/progress.md`: choices made and why; what
+  was done last and what is next.
 
 ## Checking it
 
@@ -95,9 +105,20 @@ See `docs/model.md`.
 
 The compiler version is pinned in `rust-toolchain.toml`. `ci/cargo.sh`
 runs any cargo command in a container with that compiler, with capped
-CPUs and memory and core dumps off. `tools/check-large-files.sh` refuses
-files over 5 MB; `git config core.hooksPath tools/hooks` runs it before
-every commit.
+CPUs and memory and core dumps off (`HS_CPUS`, default 4; `HS_MEM`, 8g;
+`HS_JOBS`, 4; `HS_TARGET` names the build volume, one per checkout;
+`NO_LOADWAIT=1` where no load guard is installed).
+`tools/check-large-files.sh` refuses files over 5 MB; `git config
+core.hooksPath tools/hooks` runs it before every commit.
+
+The random tests take their size from the environment:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `PROPTEST_CASES` | 256 (proptest's own) | Cases per property in the core's property tests |
+| `STORE_SEEDS` | 200 | Random batches compared between the SQLite store and the in-memory one |
+| `MODEL_SEEDS` | 100 | Seeds the model's property run tries |
+| `MODEL_FIRST_SEED` | 0 | The first of them, to spread long runs |
 
 ## Licence
 
