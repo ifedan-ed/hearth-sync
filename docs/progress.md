@@ -2,6 +2,44 @@
 
 Newest first. What was done, what is half done, what is next.
 
+## 2026-11-24: the reference model and the checkers (sync-model)
+
+Done:
+
+- `crates/model`, written from docs/sync.md and docs/sync-api.md only
+  (and docs/observation.md for what can be seen); it depends on no crate
+  of the workspace. Name rules of Hearth and of each volume, conflict
+  copy names; the decision table of sync.md 3.5 as a three-way merge
+  (`reconcile`); one checker per guarantee I1 to I13 and the mass-change
+  guard, over a trace of observations; the settled outcome, exact where
+  the plan fixes it and as a set of allowed outcomes where the order of
+  devices is free; a seeded scenario generator weighted toward the nasty
+  cases, the names corpus of sync.md 7.7, a plain-text scenario format
+  and a shrinker.
+- docs/model.md (the rules in prose, the allowed-outcome sets, the
+  scenario format, how to add a guarantee), docs/model-needs.md (what a
+  runner must observe, and how to fill it from docs/observation.md),
+  questions M1 to M16 in docs/contract-questions.md, README section.
+- Tests: 19 unit tests; 59 decision-table tests (one per cell, all 46
+  cells reached); 18 mutant tests: a naive test sync broken on purpose
+  in 17 ways (at least one per guarantee), each caught by the checker
+  meant for it while the unbroken sync passes the same scenario; the
+  property run of the naive sync, clean for seeds 0 to 999 (CI runs
+  100). `cargo fmt`, `cargo clippy -- -D warnings` clean; no unsafe.
+
+Half done:
+
+- Seeds 1000 to 3999 still show six rare cases, listed with their
+  scripts in docs/model.md, "Open findings". Not yet settled whether
+  the test stand-in, the merge or a checker is at fault in each.
+
+Next:
+
+- The simulator (`sync-sim`) maps the engine's observation to
+  `hearth_sync_model::trace::Trace` (docs/model-needs.md) and runs the
+  generated scenarios against the engine, calling `check::check_trace`.
+- The open findings; answers to M1 to M16.
+
 ## 2026-11-24: step 1, the core and the store (sync-core)
 
 Done:

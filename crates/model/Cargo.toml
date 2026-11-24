@@ -7,5 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+# One outside crate: Unicode normalisation (NFC), which the contract
+# (docs/sync-api.md section 13) makes part of what a name is. Writing the
+# normalisation tables by hand would be a second, unchecked copy of the
+# Unicode data; this crate is the standard one (MIT or Apache-2.0).
+[dependencies]
+unicode-normalization = "=0.1.26"
+
 [lints]
 workspace = true

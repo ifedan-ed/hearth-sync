@@ -2,6 +2,18 @@
 
 Choices with lasting effect, and why. Newest first.
 
+## 2026-11-24: the reference model stands alone (sync-model)
+
+crates/model depends on no crate of the workspace and on one outside
+crate, unicode-normalization (NFC is part of what a name is, sync-api
+13). It has its own seeded random generator (SplitMix64) and its own
+shrinker over the scenario text instead of proptest's: a seed must give
+the same scenario on every machine and compiler for ever (I13 and the
+seed archive), and the archive keeps scenario text that anyone can read,
+edit and replay with this crate alone. The model does not call the
+core's `guarantees` functions (docs/observation.md 4): two independent
+judgements are the check.
+
 ## 2026-11-24: crash dumps, large files, the mirror's one route
 
 - Two crash dumps (13 MB each) were committed in crates/core. Removed in
