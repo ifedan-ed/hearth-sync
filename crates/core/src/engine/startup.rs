@@ -133,7 +133,6 @@ impl<S: Store> Engine<S> {
     /// Recovery of every operation in the journal, then a full scan.
     pub(super) fn start_recover(&mut self, env: &mut Env<'_>) -> EngineResult<bool> {
         let mut batch = Vec::new();
-        let mut kept_temps = std::collections::BTreeSet::new();
         for op in self.store.ops()? {
             let keep = match (op.kind, op.state) {
                 // A download's bytes so far are kept (I11: no completed
@@ -152,7 +151,6 @@ impl<S: Store> Engine<S> {
                 _ => false,
             };
             if keep {
-                kept_temps.insert(layout::temp_for(op.id));
                 // Retry at once after a restart.
                 let mut op = op;
                 op.next_try_ns = None;
@@ -167,16 +165,9 @@ impl<S: Store> Engine<S> {
             }
         }
         self.commit(batch)?;
-        // Temp files no kept operation owns hold only bytes downloaded from
-        // Hearth (they never became a file anyone saw): remove them.
-        if let Ok(entries) = env.fs.list_dir(&layout::tmp_dir()) {
-            for e in entries {
-                let p = layout::tmp_dir().join(&e.name);
-                if !kept_temps.contains(&p) {
-                    let _ = env.fs.remove_temp(&p);
-                }
-            }
-        }
+        // Files in the temp folder that no operation names are taken in
+        // once the mounts are known (`adopt_orphan_temps`).
+        self.orphan_temps_pending = true;
         for p in self.store.problems()? {
             if let crate::tree::Subject::Node(n) = p.subject {
                 self.with_problem.insert(n);
@@ -189,5 +180,68 @@ impl<S: Store> Engine<S> {
         self.next_rescan_ns = Some(now + super::secs(self.cfg.rescan_interval_s));
         self.next_problem_retry_ns = Some(now + super::secs(self.cfg.problem_retry_s));
         Ok(true)
+    }
+
+    /// A temp file of an operation dropped at recovery held only downloaded
+    /// bytes and was removed with it. Any other file in the temp folder is
+    /// tied to no operation: it may be a replaced file waiting for its
+    /// check, so it is never unlinked (R14, R17). It goes to the holding
+    /// area, emptied only when Hearth is shown to have its bytes, and is
+    /// listed once. Run once after start, when the home mount is known.
+    pub(super) fn adopt_orphan_temps(&mut self, env: &mut Env<'_>) -> EngineResult<()> {
+        self.orphan_temps_pending = false;
+        let Some(mount) = self
+            .store
+            .mounts()?
+            .into_iter()
+            .find(|m| m.local_path.is_empty())
+        else {
+            return Ok(());
+        };
+        let tied: std::collections::BTreeSet<_> = self
+            .store
+            .ops()?
+            .iter()
+            .map(|o| layout::temp_for(o.id))
+            .collect();
+        let Ok(entries) = env.fs.list_dir(&layout::tmp_dir()) else {
+            return Ok(());
+        };
+        let now = env.clock.now_ns();
+        for e in entries {
+            let p = layout::tmp_dir().join(&e.name);
+            if tied.contains(&p) || e.meta.kind != crate::fs::EntryKind::File {
+                continue;
+            }
+            let Ok((id, held)) = self.held_place(env, &e.name) else {
+                continue;
+            };
+            if env.fs.rename_noreplace(&p, &held).is_err() {
+                continue;
+            }
+            let hash = super::scan::read_hash(env, &held, e.meta.size, self.cfg.range_size).ok();
+            let mut b = vec![Write::PutHeld(crate::tree::HeldRow {
+                id,
+                original: p.clone(),
+                held: held.clone(),
+                hash,
+                size: e.meta.size,
+                reason: crate::tree::HeldReason::Retired,
+                basis: crate::tree::PurgeBasis::Unproven,
+                mount: mount.id.clone(),
+                at_ns: now,
+            })];
+            b.push(
+                self.problem_write(
+                    crate::tree::Subject::Path(held),
+                    crate::tree::ProblemKind::Recovered,
+                    "found in the engine's temp folder after a restart; kept in the holding area"
+                        .into(),
+                    now,
+                )?,
+            );
+            self.commit(b)?;
+        }
+        Ok(())
     }
 }

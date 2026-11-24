@@ -108,6 +108,15 @@ pub enum Decision {
     Problem(ProblemKind, String),
 }
 
+/// A side of a node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Side {
+    /// The disk.
+    Local,
+    /// Hearth.
+    Remote,
+}
+
 /// What a check of a target found.
 enum Target {
     /// Free: go ahead.
@@ -144,6 +153,9 @@ pub struct Planner<'a> {
     /// Nodes listed as problems (they will not move until something
     /// changes).
     pub problems: &'a BTreeSet<NodeId>,
+    /// Nodes whose move Hearth refused for lack of rights (a 403 after the
+    /// rights changed): their local move is undone (R18).
+    pub refused_moves: &'a BTreeSet<NodeId>,
     /// The sync root's node.
     pub root: NodeId,
     /// The next node id to give (for splits); the engine stores it after.
@@ -153,6 +165,7 @@ pub struct Planner<'a> {
     /// first sync of a million files reads each folder once, not once per
     /// file below it.
     excluded: RefCell<BTreeMap<NodeId, view::Exclusion>>,
+    notes: RefCell<BTreeMap<NodeId, String>>,
     remote_paths: RefCell<BTreeMap<NodeId, Option<Vec<String>>>>,
 }
 
@@ -170,6 +183,7 @@ impl<'a> Planner<'a> {
         split_deletes: &'a BTreeSet<NodeId>,
         name_bytes_max: usize,
         problems: &'a BTreeSet<NodeId>,
+        refused_moves: &'a BTreeSet<NodeId>,
         root: NodeId,
         next_node: &'a Cell<u64>,
     ) -> Planner<'a> {
@@ -184,10 +198,12 @@ impl<'a> Planner<'a> {
             split_deletes,
             name_bytes_max,
             problems,
+            refused_moves,
             root,
             next_node,
             deletable: RefCell::new(BTreeMap::new()),
             excluded: RefCell::new(BTreeMap::new()),
+            notes: RefCell::new(BTreeMap::new()),
             remote_paths: RefCell::new(BTreeMap::new()),
         }
     }
@@ -275,6 +291,15 @@ impl<'a> Planner<'a> {
             && let Some(prec) = self.store.node(p)?
             && prec.mount != rec.mount
         {
+            // Out of a mount without the right to delete, or into one
+            // without the right to create: undone on the device (R18),
+            // so the file's synced place is never the one it left.
+            let into = self.mounts.get(&prec.mount);
+            if !mount.perms.allows(Perms::DELETE)
+                || into.is_none_or(|m| !m.perms.allows(Perms::CREATE))
+            {
+                return self.undo_move(&rec);
+            }
             return self.split_local(&rec);
         }
         match &rec.synced {
@@ -435,8 +460,42 @@ impl<'a> Planner<'a> {
         view::local_place(rec)
     }
 
+    /// Hearth's place of a node as this device can follow it. When Hearth
+    /// gives an item a name this device cannot hold, only the name stays
+    /// behind (R10): the item keeps its local name in Hearth's folder, its
+    /// content (and a folder's contents) go on syncing by identity, and the
+    /// name is noted so the pass lists it (`other_name`).
     fn remote_place(&self, rec: &NodeRecord) -> StoreResult<Option<Place>> {
-        view::remote_place(self.store, self.mounts, self.root, &self.cfg.volume, rec)
+        let Some(p) =
+            view::remote_place(self.store, self.mounts, self.root, &self.cfg.volume, rec)?
+        else {
+            return Ok(None);
+        };
+        let Some(lp) = self.local_place(rec) else {
+            return Ok(Some(p));
+        };
+        let at_root = p.parent == Some(self.root);
+        match (rec.remote.as_ref(), p.parent) {
+            (Some(r), Some(_)) if hold_refusal(&p.name, &self.cfg.volume, at_root).is_some() => {
+                self.notes.borrow_mut().insert(
+                    rec.node,
+                    format!(
+                        "other_name: Hearth calls it {:?}, which this device cannot hold",
+                        r.name
+                    ),
+                );
+                Ok(Some(Place {
+                    parent: p.parent,
+                    name: lp.name,
+                }))
+            }
+            _ => Ok(Some(p)),
+        }
+    }
+
+    /// The name note R10 made for a node in this pass, if any.
+    pub fn take_note(&self, n: NodeId) -> Option<String> {
+        self.notes.borrow_mut().remove(&n)
     }
 
     // ----- the table -----
@@ -494,7 +553,16 @@ impl<'a> Planner<'a> {
         let l_hash = rec.local.as_ref().and_then(|l| l.hash);
         let r_hash = rec.remote.as_ref().and_then(|r| r.hash);
         let same_content = l_hash.is_some() && l_hash == r_hash;
-        match file_step(cell, same_place, same_content) {
+        let step = file_step(cell, same_place, same_content);
+        // R8: deleted on one side only because its folder was, after the
+        // other side moved it out of that folder: it survives there.
+        if step == FileStep::DeleteLocal && self.moved_out_of_deleted(rec, Side::Remote)? {
+            return self.forget_bases_below(rec, Side::Remote);
+        }
+        if step == FileStep::DeleteRemote && self.moved_out_of_deleted(rec, Side::Local)? {
+            return self.forget_bases_below(rec, Side::Local);
+        }
+        match step {
             FileStep::Nothing => {
                 // The etag may have moved without a change of content (a
                 // touch on Hearth): record it, so a file Hearth has not
@@ -590,13 +658,95 @@ impl<'a> Planner<'a> {
                 }
             }
             FolderCell::RemoveLocallyF | FolderCell::GLocalMoveRemoteDelete => {
+                if self.moved_out_of_deleted(rec, Side::Remote)? {
+                    return self.forget_bases_below(rec, Side::Remote);
+                }
                 self.folder_deleted_on_hearth(rec, mount)
             }
             FolderCell::DeleteOnHearthF | FolderCell::GLocalDeleteRemoteMove => {
+                if self.moved_out_of_deleted(rec, Side::Local)? {
+                    return self.forget_bases_below(rec, Side::Local);
+                }
                 self.folder_deleted_locally(rec, mount)
             }
             FolderCell::DropNode => self.drop_node(rec),
         }
+    }
+
+    /// R8: whether a node gone on side `gone` is gone only because a folder
+    /// was deleted there after the other side had moved it (or a folder
+    /// above it) out of that folder. Walks up the base: every node on the
+    /// way is gone on that side; the first that the other side moved must
+    /// have had, in the base, a folder that is itself gone on that side.
+    /// A node deleted by itself (its folder still there) is not covered:
+    /// cell D stands.
+    fn moved_out_of_deleted(&self, rec: &NodeRecord, gone: Side) -> StoreResult<bool> {
+        let mut cur = rec.clone();
+        for _ in 0..10_000 {
+            let present = match gone {
+                Side::Remote => cur.remote.is_some(),
+                Side::Local => cur.local.is_some(),
+            };
+            if present {
+                return Ok(false);
+            }
+            let base = view::base_place(&cur);
+            let moved = match gone {
+                Side::Remote => cur.local.is_some() && self.local_place(&cur) != base,
+                Side::Local => cur.remote.is_some() && self.remote_place(&cur)? != base,
+            };
+            let Some(p) = base.and_then(|b| b.parent) else {
+                return Ok(false);
+            };
+            let Some(prec) = self.store.node(p)? else {
+                return Ok(moved);
+            };
+            let parent_gone = match gone {
+                Side::Remote => prec.remote.is_none(),
+                Side::Local => prec.local.is_none(),
+            };
+            if moved {
+                return Ok(parent_gone);
+            }
+            if !parent_gone {
+                return Ok(false);
+            }
+            cur = prec;
+        }
+        Ok(false)
+    }
+
+    /// A survivor by R8 becomes new on the side it is gone from: its base,
+    /// and that of everything below it that is gone on that side too, is
+    /// forgotten, so the next pass uploads (or downloads) it as a creation.
+    /// Safe by construction: an item with nothing on one side and no base
+    /// is only ever copied to that side, never deleted from the other.
+    fn forget_bases_below(&self, rec: &NodeRecord, gone: Side) -> StoreResult<Decision> {
+        let mut w = Vec::new();
+        let mut stack = vec![rec.node];
+        let mut seen = BTreeSet::new();
+        while let Some(n) = stack.pop() {
+            if !seen.insert(n) || seen.len() > 1_000_000 {
+                continue;
+            }
+            let Some(r) = self.store.node(n)? else {
+                continue;
+            };
+            let gone_here = match gone {
+                Side::Remote => r.remote.is_none(),
+                Side::Local => r.local.is_none(),
+            };
+            if !gone_here || r.synced.is_none() {
+                continue;
+            }
+            if self.busy(&n) {
+                return Ok(Decision::Wait(Some(n)));
+            }
+            w.push(Write::DelSynced(n));
+            w.push(Write::MarkDirty(n));
+            stack.extend(self.store.synced_children(n)?);
+        }
+        Ok(Decision::Record(w))
     }
 
     /// F, Hearth's side gone: the folder leaves the disk only when empty;
@@ -959,7 +1109,12 @@ impl<'a> Planner<'a> {
         if !mount.perms.allows(Perms::CREATE) {
             return Ok(Decision::Problem(
                 ProblemKind::ReadOnly,
-                "not uploaded: the folder is read-only".into(),
+                if rec.synced.is_some() {
+                    "read_only_edit: edited here and deleted on Hearth, in a read-only folder"
+                        .into()
+                } else {
+                    "not uploaded: the folder is read-only".into()
+                },
             ));
         }
         match self.check_remote_target(rec, &place)? {
@@ -1004,14 +1159,10 @@ impl<'a> Planner<'a> {
         let Some(r) = &rec.remote else {
             return Ok(Decision::Clean);
         };
-        if !mount.perms.allows(Perms::DELETE | Perms::CREATE) {
-            // A move Hearth would refuse is undone locally (3.5).
-            return Ok(match self.move_local(rec)? {
-                Decision::Op(op) => Decision::Op(
-                    op.listing(ProblemKind::ReadOnly, "moved back: the folder is read-only"),
-                ),
-                other => other,
-            });
+        if !mount.perms.allows(Perms::DELETE | Perms::CREATE)
+            || self.refused_moves.contains(&rec.node)
+        {
+            return self.undo_move(rec);
         }
         // A move that would put a folder into itself on Hearth: Hearth's
         // place wins (C, the cycle case).
@@ -1033,6 +1184,23 @@ impl<'a> Planner<'a> {
         Ok(Decision::Op(
             PlannedOp::new(OpKind::MoveRemote).cond(cond).to(&place),
         ))
+    }
+
+    /// A local move the mount's rights refuse is undone on the device: the
+    /// item goes back to where Hearth has it (R18). Only if it cannot go
+    /// back (its old name is held by an item that stays, or the device
+    /// cannot hold the name) does it stay where the person put it, listed
+    /// `read_only_move`, with nothing sent.
+    fn undo_move(&self, rec: &NodeRecord) -> StoreResult<Decision> {
+        Ok(match self.move_local(rec)? {
+            Decision::Problem(_, why) => Decision::Problem(
+                ProblemKind::ReadOnly,
+                format!(
+                    "read_only_move: the folder is read-only and the item cannot go back ({why})"
+                ),
+            ),
+            other => other,
+        })
     }
 
     /// Checks a place on disk for a node to be put at: the folder is on
@@ -1074,6 +1242,14 @@ impl<'a> Planner<'a> {
             return Ok(Target::Instead(self.pair(&orec, rec, rec.node)?));
         }
         let o_name = self.local_place(&orec).map(|p| p.name);
+        if self.unselected.contains(&o) {
+            // A folder shut out of sync (a mount that left, R6) holds the
+            // name: this one is the name clash and waits.
+            return Ok(Target::Instead(Decision::Problem(
+                ProblemKind::NameClash,
+                "the name is held on this device by a folder that is not synced".into(),
+            )));
+        }
         if self.problems.contains(&o) {
             // Its holder cannot move (it is listed): this one cannot either.
             return Ok(Target::Instead(Decision::Problem(
@@ -1149,9 +1325,8 @@ impl<'a> Planner<'a> {
     /// other in a circle (Hearth swapped two names, or rotated several):
     /// then the lowest node of the circle first moves to a parking name in
     /// its own folder, which frees its place and breaks the circle. The
-    /// parking name is an ordinary visible name; the next pass moves the
-    /// node on to Hearth's place (Hearth's place wins, C), so it is never
-    /// uploaded.
+    /// parking name is one of the engine's temp names, so it is never
+    /// uploaded; the next pass moves the node on to Hearth's place.
     fn wait_or_break_cycle(&self, rec: &NodeRecord, o: NodeId) -> StoreResult<Target> {
         let me = rec.node;
         let mut cycle = vec![me, o];
@@ -1173,7 +1348,10 @@ impl<'a> Planner<'a> {
                         };
                         let park = Place {
                             parent: l.parent,
-                            name: format!(".moving-{}", me.0),
+                            // One of the engine's own names (R15: it
+                            // invents none other on the device), tied to
+                            // this node, which the scanner follows.
+                            name: format!(".{}.moving{}", me.0, crate::names::TEMP_SUFFIX),
                         };
                         return Ok(Target::Instead(Decision::Op(
                             PlannedOp::new(OpKind::MoveLocal).to(&park),
@@ -1200,6 +1378,15 @@ impl<'a> Planner<'a> {
         let Some(l) = &rec.local else {
             return Ok(Target::Wait(None));
         };
+        // The engine's own names never go to Hearth (R14): a node parked
+        // under one goes back to where Hearth has it instead.
+        if crate::names::is_engine_name(
+            &place.name,
+            place.parent == Some(self.root),
+            &self.cfg.volume,
+        ) {
+            return Ok(Target::Instead(self.move_local(rec)?));
+        }
         if let Some(why) = remote_refusal(&l.name, self.name_bytes_max) {
             return Ok(Target::Instead(Decision::Problem(
                 ProblemKind::NameRefused,
@@ -1460,16 +1647,32 @@ impl<'a> Planner<'a> {
         }
         let synced_kids = self.store.synced_children(rec.node)?;
         if let Some(c) = synced_kids.first() {
-            // Children only Hearth has, listed as problems (a name this
-            // device cannot hold), keep their base pointing here for ever.
-            // Their base can be forgotten safely: with nothing on disk, a
-            // node without a base is only ever downloaded, never deleted
-            // on Hearth. Then this folder can go.
+            // Children whose base still names this folder while neither side
+            // has them here any more (moved away on both sides, one move
+            // listed because it cannot be done: a name clash, a name this
+            // device cannot hold) would keep it for ever. Their base is
+            // forgotten: a node without a base and present on both sides is
+            // compared by content (equal adopted, different kept as a
+            // conflict copy), and one present on one side is only copied to
+            // the other; neither is ever deleted because of it. Then this
+            // folder can go.
             let mut forget = Vec::new();
             for k in &synced_kids {
-                let listed_remote_only = self.problems.contains(k)
-                    && self.store.node(*k)?.is_some_and(|r| r.local.is_none());
-                if !listed_remote_only {
+                if self.busy(k) {
+                    return Ok(Decision::Wait(Some(*k)));
+                }
+                let Some(kr) = self.store.node(*k)? else {
+                    continue;
+                };
+                let local_here = kr
+                    .local
+                    .as_ref()
+                    .is_some_and(|l| l.parent == Some(rec.node));
+                let remote_here = match kr.remote.as_ref().and_then(|r| r.parent.clone()) {
+                    Some(p) => self.store.node_by_remote(&p)? == Some(rec.node),
+                    None => false,
+                };
+                if local_here || remote_here {
                     return Ok(Decision::Wait(Some(*c)));
                 }
                 forget.push(Write::DelSynced(*k));

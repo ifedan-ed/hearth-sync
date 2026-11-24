@@ -63,6 +63,11 @@ kept with the server. `CONTRACT` names the version this code implements.
   everything sync removes. Guards for a missing root, mass deletions, a
   changed or restored server. Every outside thing (disk, Hearth, clock,
   randomness, scheduling) is an interface, so a run replays from a seed.
+  It follows the rulings of the plan's section 3.17: moves the rights
+  refuse are undone, a name the device cannot hold leaves only the name
+  behind, unknown hashes are not differences, ignored items are counted
+  rather than listed, and a replaced root or a returning share is synced
+  again by content.
 - `crates/store`: the state database on SQLite (WAL, full fsync), with
   the same contract as the in-memory store the simulator uses.
 - `crates/model`: the reference model and one checker per guarantee,

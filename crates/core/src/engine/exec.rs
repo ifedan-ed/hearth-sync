@@ -149,6 +149,9 @@ impl<S: Store> Engine<S> {
                     self.with_problem.remove(&op.node);
                 }
                 self.runtime.remove(&op.id);
+                if op.kind == OpKind::MoveLocal {
+                    self.refused_moves.remove(&op.node);
+                }
                 self.commit(b)?;
             }
             Outcome::Fail(f) => self.fail_op(env, op, *f)?,
@@ -178,7 +181,10 @@ impl<S: Store> Engine<S> {
             }
             Failure::WaitForChange(kind, why) => {
                 self.runtime.remove(&op.id);
-                if op.kind == OpKind::Download {
+                // A temp file is removed only while it holds downloaded
+                // bytes; from the swap on it holds the replaced file, which
+                // is never unlinked before it is examined (R17).
+                if op.kind == OpKind::Download && op.state < OpState::Swapping {
                     let _ = env.fs.remove_temp(&layout::temp_for(op.id));
                 }
                 let w = self.problem_write(Subject::Node(op.node), kind, why, now)?;
@@ -355,7 +361,7 @@ impl<S: Store> Engine<S> {
     }
 
     /// The holding area's place for an item: `.hearthsync/held/<date>/<id>-<name>`.
-    fn held_place(
+    pub(super) fn held_place(
         &mut self,
         env: &mut Env<'_>,
         name: &LocalName,
@@ -1456,6 +1462,13 @@ impl<S: Store> Engine<S> {
                     b.push(Write::PutSynced(s));
                 }
                 Ok(Outcome::Done(b))
+            }
+            Err(e) if e.code() == Some(&ErrorCode::NoPermission) => {
+                // Refused for lack of rights (they changed meanwhile): the
+                // local move is undone (R18), and the mounts read again.
+                self.refused_moves.insert(op.node);
+                self.mounts_stale = true;
+                fail(Fail::replan())
             }
             Err(e) => fail(Fail::remote(&e)),
         }

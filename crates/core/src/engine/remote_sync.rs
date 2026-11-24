@@ -218,10 +218,21 @@ impl<S: Store> Engine<S> {
                 }
             };
             if row.cursor.is_none() && row.listing.is_none() {
-                // A mount that came back (or never finished): list it.
+                // A mount that came back after it left (R6): its folder is
+                // synced with it again as a root without history (R5), by
+                // content. Or one that never finished its first listing.
+                let came_back = self.store.unselected()?.contains(&row.root_node);
+                if came_back {
+                    row.selected = info.prompt != "ask";
+                    batch.push(Write::Reselect(row.root_node));
+                }
                 let generation = self.new_generation();
                 row.listing = Some(Listing {
-                    reason: ListReason::Retention,
+                    reason: if came_back {
+                        ListReason::Untrusted
+                    } else {
+                        ListReason::Retention
+                    },
                     page: None,
                     cursor: None,
                     generation,
@@ -282,7 +293,7 @@ impl<S: Store> Engine<S> {
             batch.push(self.problem_write(
                 Subject::Node(m.root_node),
                 ProblemKind::MountGone,
-                "this share or folder is no longer available; the local copy is kept".into(),
+                "no_longer_shared: the local folder is kept as it is and not synced".into(),
                 now,
             )?);
             batch.push(Write::Unselect(m.root_node));

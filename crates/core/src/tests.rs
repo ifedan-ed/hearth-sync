@@ -10,6 +10,7 @@ mod cells;
 mod guards;
 mod props;
 mod recovery;
+mod rulings;
 
 use std::collections::{BTreeMap, BTreeSet};
 

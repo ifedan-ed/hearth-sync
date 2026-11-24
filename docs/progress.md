@@ -2,6 +2,49 @@
 
 Newest first. What was done, what is half done, what is next.
 
+## 2026-11-24, night: the core follows the rulings (sync-core)
+
+The engine is in line with docs/sync.md 3.17 and contract 2026-11-24 (c)
+(`CONTRACT`: 5a7281a). Per ruling:
+
+- R18: a local move the rights refuse (inside, out of or into a read-only
+  mount, or a late 403) is undone on the device and not listed; listed
+  `read_only_move` only if it cannot go back.
+- R19: an unknown hash on Hearth is not a difference (I8's check and the
+  planner use the verified etag and size); a hash that arrives and
+  differs makes a download, never an upload.
+- R8: an item moved out of a folder the other side deleted survives at
+  its new place (its base, and that of what is below it, is forgotten, so
+  it is copied to the side it is gone from); a direct delete against a
+  move stays cell D.
+- R10: a name this device cannot hold leaves only the name behind
+  (listed `other_name`); content and a folder's contents keep syncing.
+- R4: of two local names one in NFC, the synced one, else the NFC one,
+  else the first by bytes syncs. R7: simple folding without a second
+  normalisation; the Unicode version named in docs/decisions.md.
+- R3: the device label (`device` when nothing is left). R16: the exact
+  default ignore list; ignored items are a count (`Observation::ignored`),
+  never problems. R14, R17: the engine's names compared as the volume
+  compares; a temp file no operation names goes to the holding area,
+  never unlinked; a replaced file is never removed before it is examined.
+- R1: the mass-change guard counts plain overwrites and deletes of files
+  against the mount's synced files; conflict-copy replaces do not count.
+- R5: `Engine::confirm_replaced_root` (a new root with no history). R6:
+  a mount that returns syncs again by content; `Engine::keep_in_my_files`;
+  a folder shut out holds its name (others are the clash). R9: listed
+  `read_only_edit`. R12: short of space, proven entries are emptied
+  before their days. R15: the circle-breaking parking name is now one of
+  the engine's own temp names, followed by the scanner. R2, R11, R13: as
+  built.
+- Found by the 20,000-case runs and fixed, with a named regression: a
+  deleted folder kept for ever by the base of a child whose move back is
+  listed (bases of children gone from both sides are now forgotten).
+- Tests: 120 in the core (12 for the rulings in tests/rulings.rs), the
+  store's 8 and its crash test. Both random-run properties passed 20,000
+  cases each after the last fix, and a second independent 20,000 each.
+- Not done: a test of R6's returning mount (the test kit's Hearth has one
+  mount); the client's display of the ignored count.
+
 ## 2026-11-24, night: rulings on M1 to M16 and the judges' disagreements
 
 Docs only. Decided in Hearth's docs/sync.md 3.17 (R1 to R19); the table

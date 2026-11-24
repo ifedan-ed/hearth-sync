@@ -65,6 +65,8 @@ and is not called on any hot path.
         problems: Vec<ProblemView>,   // what is not synced and why (I10)
         held: Vec<HeldView>,          // the holding area, "Removed by sync"
         mass_change: Option<MassChangeView>,
+        absent_roots: Vec<NodeId>,    // mount roots missing on disk
+        ignored: u64,                 // items the ignore rules keep out (R16)
     }
 
 ### MountView
@@ -123,7 +125,9 @@ what the engine had seen (I3).
 `NameNotHoldable`, `NameRefused`, `NameClash`, `ReadOnly`, `Locked`,
 `Quota`, `Infected`, `HashMismatch`, `StillChanging`, `Ignored`,
 `NotSelected`, `Symlink`, `Special`, `E2eeUnsupported`, `MountRootMissing`,
-`KeptForIgnored`, `HeldPurgeUnproven`), `reason` (free text for people),
+`KeptForIgnored`, `Recovered`), `reason` (free text for people; it
+begins with the ruling's word where one names it: `other_name`,
+`read_only_move`, `read_only_edit`, `no_longer_shared`),
 `count`.
 
 ### HeldView
@@ -168,7 +172,7 @@ byte-identical logs). Each returns `Vec<Violation>`; empty means it holds.
 | I5 | `i5_hashes_verified(disk, obs)` | a disk snapshot: every file the local tree records as synced has the hash recorded |
 | I6 | `i6_no_deletion_from_missing_root(obs, root_present)` | whether the simulated root is present |
 | I7 | (trace) the model counts steps and requests after faults stop |
-| I8 | `i8_converged(obs)` | the observation alone, when the engine is idle |
+| I8 | `i8_converged(obs)` | the observation alone, when the engine is idle; an unknown hash on Hearth is not a difference (R19: etag and size stand in) |
 | I9 | `i9_conflict_copies(obs, copies)` | the conflict copy log |
 | I10 | `i10_problems_listed(obs)` | the observation: every node not converged is listed with a reason |
 | I11 | `i11_store_consistent(store)` | the store after a crash: parents exist and are folders, no cycles, unique name keys per folder, no orphan ops or transfers |

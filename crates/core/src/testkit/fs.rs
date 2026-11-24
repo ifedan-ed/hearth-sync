@@ -93,6 +93,11 @@ impl FakeFs {
         if let Some(i) = entries.get(name) {
             return Some((name.to_vec(), *i));
         }
+        // A case-sensitive volume (ext4) keeps names as bytes: two
+        // normalisations of one name are two files there.
+        if !self.rules.case_insensitive {
+            return None;
+        }
         let k = self.key(name);
         k.as_ref()?;
         entries

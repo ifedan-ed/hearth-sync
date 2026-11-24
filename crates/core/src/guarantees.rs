@@ -204,7 +204,19 @@ pub fn i8_converged(obs: &Observation) -> Vec<Violation> {
             (None, None, None) => {}
             (Some(l), Some(r), Some(s)) => {
                 let same_kind = l.kind == r.kind && r.kind == s.kind;
-                let same_hash = l.kind == Kind::Folder || (l.hash == r.hash && r.hash == s.hash);
+                // R19: an unknown hash on Hearth is not a difference; the
+                // etag and size recorded when the device verified the file
+                // stand in for it.
+                let same_hash = l.kind == Kind::Folder
+                    || match r.hash {
+                        Some(_) => l.hash == r.hash && r.hash == s.hash,
+                        None => {
+                            l.hash.is_some()
+                                && l.hash == s.hash
+                                && r.etag == s.remote_etag
+                                && r.size == s.size
+                        }
+                    };
                 let lname = l.name.as_str().map(to_nfc);
                 let same_name = r.parent.is_none() || lname.as_deref() == Some(r.name.as_str());
                 if !same_kind || !same_hash || !same_name {

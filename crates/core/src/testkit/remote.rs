@@ -49,6 +49,9 @@ pub enum Fault {
     LostAfter,
     /// Answered with this refusal instead of being done.
     Refuse(u16, String),
+    /// The next request of this name (as in the log) is refused so; other
+    /// requests pass until it comes.
+    RefuseRequest(String, u16, String),
 }
 
 /// The fake Hearth.
@@ -205,8 +208,16 @@ impl FakeRemote {
     /// Runs the fault queue for one request: Some(answer) to give instead.
     fn fault(&mut self, name: &str) -> Option<Result<(), RemoteError>> {
         self.log.push(name.to_owned());
+        if let Some(Fault::RefuseRequest(target, _, _)) = self.faults.front()
+            && target != name
+        {
+            return None;
+        }
         match self.faults.pop_front() {
             None => None,
+            Some(Fault::RefuseRequest(_, status, code)) => {
+                Some(Err(api(status, &code, Details::default())))
+            }
             Some(Fault::LostBefore) => Some(Err(RemoteError::Lost("cut before".into()))),
             Some(Fault::LostAfter) => Some(Ok(())),
             Some(Fault::Refuse(status, code)) => Some(Err(api(status, &code, Details::default()))),
@@ -498,6 +509,26 @@ impl FakeRemote {
     pub fn client_delete(&mut self, path: &[&str]) {
         if let Some(id) = self.id_at(path).and_then(|r| Self::parse_id(&r)) {
             self.trash(id);
+        }
+    }
+
+    /// Sets a file's hash as unknown (a file changed behind Hearth's back
+    /// and not yet hashed) or known again, as the server's hash job would;
+    /// both take a new number (6.2: a hash becoming known is a change).
+    /// `wrong` sets a hash that is not the content's, to stand for bytes
+    /// damaged on one side (R19).
+    pub fn client_set_hash(&mut self, path: &[&str], known: bool, wrong: bool) {
+        let Some(id) = self.id_at(path).and_then(|r| Self::parse_id(&r)) else {
+            return;
+        };
+        let seq = self.bump();
+        if let Some(e) = self.entries.get_mut(&id) {
+            e.hash = match (known, wrong) {
+                (false, _) => None,
+                (true, false) => Some(Hash::of(&e.content)),
+                (true, true) => Some(Hash::of(b"other bytes")),
+            };
+            e.seq = seq;
         }
     }
 

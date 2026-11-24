@@ -396,3 +396,20 @@ fn regression_a_moved_out_edit_onto_a_case_twin() {
     );
     assert!(r.is_ok(), "{r:?}");
 }
+
+/// Regression, found by the local run of 20,000 cases after the rulings
+/// (2026-11-24): on a case-insensitive volume the disk moves `c/f.txt` to
+/// `a/g.txt` and deletes `c`, while Hearth moves it to `a/F.txt` (one name
+/// with `a/f.txt` here, so the move back is listed). The deleted folder
+/// `c` waited for ever on that file's base.
+#[test]
+fn regression_a_folder_kept_by_the_base_of_a_listed_move() {
+    let r = random_case(
+        VolumeRules::WINDOWS,
+        0,
+        &[Change::Move(2, 2, 0, 1), Change::DeleteFolder(2)],
+        &[Change::Move(2, 0, 0, 2)],
+        None,
+    );
+    assert!(r.is_ok(), "{r:?}");
+}

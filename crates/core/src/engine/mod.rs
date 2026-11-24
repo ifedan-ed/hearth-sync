@@ -33,7 +33,7 @@ use crate::config::{Config, ConfigError};
 use crate::env::Env;
 use crate::ids::{ConflictId, HeldId, MountId, NodeId, OpId, RemoteId};
 use crate::ignore::IgnoreRules;
-use crate::names::{LocalPath, clean_device_name};
+use crate::names::{LocalPath, device_label};
 use crate::observe::{MassChangeView, Observation};
 use crate::remote::Hello;
 use crate::store::{Batch, MetaKey, Store, StoreError, Write};
@@ -181,8 +181,13 @@ pub struct Engine<S: Store> {
     hash_queue: BTreeSet<NodeId>,
     hash_tries: BTreeMap<NodeId, u32>,
     absent_roots: BTreeSet<NodeId>,
+    /// Ignored items found on disk, per folder, for the client's count
+    /// (R16; they are not problems).
+    ignored: BTreeMap<NodeId, u64>,
     // Planning and operations.
     with_problem: BTreeSet<NodeId>,
+    refused_moves: BTreeSet<NodeId>,
+    orphan_temps_pending: bool,
     split_deletes: BTreeSet<NodeId>,
     runtime: BTreeMap<OpId, OpRuntime>,
     mass_approved: Option<u64>,
@@ -196,8 +201,7 @@ impl<S: Store> Engine<S> {
     /// written until the first `step`.
     pub fn new(store: S, cfg: Config) -> EngineResult<Engine<S>> {
         cfg.validate().map_err(EngineError::Config)?;
-        let device = clean_device_name(&cfg.device_name)
-            .ok_or(EngineError::Config(ConfigError::DeviceName))?;
+        let device = device_label(&cfg.device_name);
         let (ignore, _bad) = IgnoreRules::new(&cfg.ignore);
         Ok(Engine {
             store,
@@ -220,7 +224,10 @@ impl<S: Store> Engine<S> {
             hash_queue: BTreeSet::new(),
             hash_tries: BTreeMap::new(),
             absent_roots: BTreeSet::new(),
+            ignored: BTreeMap::new(),
             with_problem: BTreeSet::new(),
+            refused_moves: BTreeSet::new(),
+            orphan_temps_pending: false,
             split_deletes: BTreeSet::new(),
             runtime: BTreeMap::new(),
             mass_approved: None,
@@ -302,6 +309,10 @@ impl<S: Store> Engine<S> {
         if self.resolve_departed()? {
             return Ok(true);
         }
+        if self.orphan_temps_pending && self.root.is_some() {
+            self.adopt_orphan_temps(env)?;
+            return Ok(true);
+        }
         if self.root.is_some() && self.scan_work(env)? {
             return Ok(true);
         }
@@ -369,6 +380,83 @@ impl<S: Store> Engine<S> {
         }
     }
 
+    /// "Keep in my files" for a mount that left (R6): its folder becomes an
+    /// ordinary folder of the person's own files and uploads from then on.
+    pub fn keep_in_my_files(&mut self, mount: &MountId) -> EngineResult<()> {
+        let mounts = self.store.mounts()?;
+        let Some(gone) = mounts
+            .iter()
+            .find(|m| &m.id == mount && !m.selected && m.cursor.is_none())
+        else {
+            return Ok(());
+        };
+        let Some(home) = mounts.iter().find(|m| m.local_path.is_empty()) else {
+            return Ok(());
+        };
+        let mut b = Vec::new();
+        for n in self.store.mount_nodes(&gone.id)? {
+            b.push(Write::PutNode(n, home.id.clone()));
+            b.push(Write::MarkDirty(n));
+        }
+        b.push(Write::Reselect(gone.root_node));
+        b.push(Write::DelProblem(Subject::Node(gone.root_node)));
+        b.push(Write::DelMount(gone.id.clone()));
+        self.with_problem.remove(&gone.root_node);
+        self.commit(b)?;
+        self.queue_full_scan();
+        Ok(())
+    }
+
+    /// "Go on" for a replaced root (3.11, R5): the folder found at the sync
+    /// root becomes a new root with no history. A new marker is written,
+    /// what the database held of the old root's disk is forgotten, and the
+    /// folder is synced as after a lost database (I12): equal contents
+    /// adopted, different ones conflict copies, nothing deleted on either
+    /// side because of it.
+    pub fn confirm_replaced_root(&mut self, env: &mut Env<'_>) -> EngineResult<()> {
+        if self.pause != Some(PauseReason::RootUnavailable) {
+            return Ok(());
+        }
+        let marker = format!(
+            "{:016x}{:016x}",
+            env.random.next_u64(),
+            env.random.next_u64()
+        );
+        let volume = match (env.fs.write_marker(&marker), env.fs.volume()) {
+            (Ok(()), Ok(v)) => v.to_string(),
+            _ => return Ok(()),
+        };
+        let mut b = Vec::new();
+        for op in self.store.ops()? {
+            b.push(Write::DelOp(op.id));
+        }
+        // The disk's pictures, deepest first; the bases of everything.
+        if let Some(root) = self.root {
+            let mut order = Vec::new();
+            let mut stack = vec![root];
+            while let Some(n) = stack.pop() {
+                order.push(n);
+                stack.extend(self.store.local_children(n)?);
+            }
+            for n in order.iter().rev() {
+                if *n != root {
+                    b.push(Write::DelLocal(*n));
+                }
+            }
+        }
+        for n in self.store.all_nodes()? {
+            b.push(Write::DelSynced(n));
+            b.push(Write::MarkDirty(n));
+        }
+        b.push(Write::PutMeta(MetaKey::RootMarker, marker));
+        b.push(Write::PutMeta(MetaKey::Volume, volume));
+        self.commit(b)?;
+        self.runtime.clear();
+        self.pause = None;
+        self.stage = Stage::Hello;
+        Ok(())
+    }
+
     /// Stops syncing a folder (3.13): what is on disk and synced leaves
     /// through the holding area; nothing is deleted on Hearth.
     pub fn unselect(&mut self, folder: NodeId) -> EngineResult<()> {
@@ -414,6 +502,7 @@ impl<S: Store> Engine<S> {
             self.phase(),
             &self.absent_roots,
             &self.ignore,
+            self.ignored.values().sum(),
         )?)
     }
 

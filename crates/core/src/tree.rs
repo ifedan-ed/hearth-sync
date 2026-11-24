@@ -461,11 +461,15 @@ pub enum ProblemKind {
     Stuck,
     /// Hearth refused for another reason (its code is in the text).
     Refused,
+    /// A file found in the engine's temp folder after a restart that no
+    /// operation of the journal names: moved to the holding area, never
+    /// unlinked (R14, R17), listed once.
+    Recovered,
 }
 
 impl ProblemKind {
     /// Every kind, for storage.
-    pub const ALL: [ProblemKind; 18] = [
+    pub const ALL: [ProblemKind; 19] = [
         ProblemKind::NameNotHoldable,
         ProblemKind::NameRefused,
         ProblemKind::NameClash,
@@ -484,6 +488,7 @@ impl ProblemKind {
         ProblemKind::NotSelected,
         ProblemKind::Stuck,
         ProblemKind::Refused,
+        ProblemKind::Recovered,
     ];
 
     /// A stable small number for storage.

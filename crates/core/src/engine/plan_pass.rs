@@ -56,6 +56,7 @@ impl<S: Store> Engine<S> {
                 &self.split_deletes,
                 name_max,
                 &self.with_problem,
+                &self.refused_moves,
                 root,
                 &next_node,
             );
@@ -67,10 +68,21 @@ impl<S: Store> Engine<S> {
                 };
                 after = Some(last);
                 for n in page {
-                    match planner.plan(n)? {
+                    let decision = planner.plan(n)?;
+                    // R10: a name this device cannot hold is listed while
+                    // everything else about the item syncs.
+                    let note = planner.take_note(n);
+                    if let Some(why) = &note
+                        && !matches!(decision, Decision::Problem(..))
+                    {
+                        problems.push((n, ProblemKind::NameNotHoldable, why.clone()));
+                    }
+                    match decision {
                         Decision::Clean | Decision::NotReady => {
                             writes.push(Write::ClearDirty(n));
-                            cleared.push(n);
+                            if note.is_none() {
+                                cleared.push(n);
+                            }
                         }
                         Decision::Wait(on) => {
                             writes.push(Write::Wait(n, on.unwrap_or(crate::store::WAIT_ANY)));
@@ -198,7 +210,15 @@ impl<S: Store> Engine<S> {
             };
             let (side, weight) = match op.kind {
                 OpKind::DeleteLocal => (Side::Local, 1),
-                OpKind::Download if rec.local.is_some() => (Side::Local, 1),
+                // A plain overwrite of a synced file counts; a replace that
+                // keeps the local version as a conflict copy does not (R1).
+                OpKind::Download
+                    if rec.local.as_ref().is_some_and(|l| {
+                        l.hash.is_some() && rec.synced.as_ref().is_some_and(|s| s.hash == l.hash)
+                    }) =>
+                {
+                    (Side::Local, 1)
+                }
                 OpKind::DeleteRemote | OpKind::Upload => (Side::Remote, 1),
                 OpKind::DeleteRemoteFolder => (Side::Remote, self.remote_files_below(*n)?),
                 _ => continue,
@@ -215,7 +235,10 @@ impl<S: Store> Engine<S> {
         }
         let mut items = Vec::new();
         for ((mount, side), (count, examples)) in counts {
-            let total = self.store.count_nodes(&mount)?;
+            if count <= self.cfg.mass_change_count {
+                continue;
+            }
+            let total = self.synced_files(&mount)?;
             if count > self.cfg.mass_change_count
                 && count.saturating_mul(1000) > self.cfg.mass_change_per_mille.saturating_mul(total)
             {
@@ -249,6 +272,23 @@ impl<S: Store> Engine<S> {
         Ok(Some(MassChangeView { token, items }))
     }
 
+    /// The files of a mount in the synced tree: the guard's denominator
+    /// (R1). Read only when a plan's count is over the absolute threshold.
+    fn synced_files(&self, mount: &MountId) -> EngineResult<u64> {
+        let mut n = 0;
+        for x in self.store.mount_nodes(mount)? {
+            if self
+                .store
+                .node(x)?
+                .and_then(|r| r.synced)
+                .is_some_and(|s| s.kind == crate::ids::Kind::File)
+            {
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+
     /// Files on Hearth below a folder (for the mass-change count).
     fn remote_files_below(&self, n: NodeId) -> EngineResult<u64> {
         let mut count = 0;
@@ -274,12 +314,18 @@ impl<S: Store> Engine<S> {
             .meta(MetaKey::LastPurge)?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        if now - last < super::secs(3600) {
+        // Short of space, the age does not wait (R12); the proof always
+        // does: what is not known to exist elsewhere is never emptied.
+        let low = env
+            .fs
+            .free_space()
+            .is_ok_and(|f| f < self.cfg.disk_reserve_bytes);
+        if now - last < super::secs(if low { 60 } else { 3600 }) {
             return Ok(false);
         }
         let keep_ns = super::secs(u64::from(self.cfg.held_days) * 86_400);
         for h in self.store.held()? {
-            if h.at_ns.saturating_add(keep_ns) > now {
+            if !low && h.at_ns.saturating_add(keep_ns) > now {
                 continue;
             }
             let proven = match h.basis {
@@ -308,7 +354,10 @@ impl<S: Store> Engine<S> {
             {
                 let _ = env.fs.remove_empty_dir(&dir);
             }
-            self.commit(vec![Write::DelHeld(h.id)])?;
+            self.commit(vec![
+                Write::DelHeld(h.id),
+                Write::DelProblem(crate::tree::Subject::Path(h.held.clone())),
+            ])?;
             return Ok(true);
         }
         self.commit(vec![Write::PutMeta(MetaKey::LastPurge, now.to_string())])?;

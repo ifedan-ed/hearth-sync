@@ -7,5 +7,5 @@
 # the simulator, then change this pin in the same commit.
 repository = hearth
 path = docs/sync-api.md
-commit = a0e967e2d2365c4dddfd274dd16d80b00d985aaf
+commit = 5a7281ac0b78833f5dff01f80e8ecd14e6f47bfe
 version = 1

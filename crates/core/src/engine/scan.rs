@@ -176,25 +176,54 @@ impl<S: Store> Engine<S> {
                 batch.push(Write::DelProblem(p.subject.clone()));
             }
         }
-        let mut entries = entries;
-        entries.sort_by(|a, b| a.name.cmp(&b.name));
         let existing = self.store.local_children(dir)?;
         let mut by_key = std::collections::BTreeMap::new();
+        let mut synced_names = BTreeSet::new();
+        let mut parked_here = BTreeSet::new();
         for c in &existing {
-            if let Some(l) = self.store.node(*c)?.and_then(|r| r.local) {
+            if let Some(rec) = self.store.node(*c)?
+                && let Some(l) = rec.local
+            {
                 by_key.insert(l.key.clone(), *c);
+                if l.name
+                    .as_str()
+                    .is_some_and(|n| is_engine_name(n, false, &self.cfg.volume))
+                {
+                    parked_here.insert(l.name.clone());
+                }
+                if rec.synced.is_some() {
+                    synced_names.insert(l.name.clone());
+                }
             }
         }
+        // Where two names are one name here (or in NFC), the one that syncs
+        // is the one already synced, else the one already NFC on disk, else
+        // the first by bytes (R4): it is taken first, the other is listed.
+        let mut entries = entries;
+        entries.sort_by_key(|e| {
+            let rank = if synced_names.contains(&e.name) {
+                0u8
+            } else if e.name.as_str().is_some_and(unicode_normalization::is_nfc) {
+                1
+            } else {
+                2
+            };
+            (rank, e.name.clone())
+        });
         let mut seen = BTreeSet::new();
         let mut used = BTreeSet::new();
         let mounts = self.store.mounts()?;
         // First, what each entry is; problems and ignored names are settled
         // here and take no part in matching.
         let mut cands: Vec<(crate::fs::DirEntry, crate::names::NameKey, Kind)> = Vec::new();
+        let mut ignored_here = 0u64;
         for e in entries {
             let child_path = path.join(&e.name);
+            // The engine's own names are left alone, except a parking name
+            // a node of this folder holds (a circle of moves being undone).
             if let Some(s) = e.name.as_str()
-                && is_engine_name(s, dir == root)
+                && is_engine_name(s, dir == root, &self.cfg.volume)
+                && !parked_here.contains(&e.name)
             {
                 continue;
             }
@@ -241,11 +270,13 @@ impl<S: Store> Engine<S> {
             if let Some(parts) = view::path_strs(&child_path)
                 && self.ignore.is_ignored(&parts, kind == Kind::Folder)
             {
-                // Ignored: never uploaded, never deleted (3.14). A node
+                // Ignored: never uploaded, never deleted, not a problem
+                // (3.14, R16): counted for the client's view. A node
                 // already held under this name is kept as it is.
                 if let Some(n) = by_key.get(&key) {
                     seen.insert(*n);
                 }
+                ignored_here += 1;
                 continue;
             }
             cands.push((e, key, kind));
@@ -348,6 +379,11 @@ impl<S: Store> Engine<S> {
             }
         }
         batch.extend(finals);
+        if ignored_here == 0 {
+            self.ignored.remove(&dir);
+        } else {
+            self.ignored.insert(dir, ignored_here);
+        }
         for (e, key, kind) in later {
             // New. If a mount's root belongs exactly here and has no local
             // picture yet, this folder is that root.

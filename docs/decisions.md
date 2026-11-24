@@ -2,6 +2,29 @@
 
 Choices with lasting effect, and why. Newest first.
 
+## 2026-11-24: the core follows the rulings R1 to R19 (sync.md 3.17)
+
+- Case folding (R7): Unicode simple case folding, statuses C and S of
+  CaseFolding.txt, applied to the NFC name and not normalised again. The
+  Unicode version is the pinned compiler's standard library tables:
+  Unicode 18.0.0 (`char::UNICODE_VERSION` of Rust 1.100.0). The table in
+  `names::fold_char` covers where folding differs from the library's
+  lowercase mapping. Changing the compiler's Unicode version is a
+  migration of the database's name keys: a commit of its own.
+- The device label (R3), which of two NFC-equal local names syncs (R4),
+  the engine's own names compared as the volume compares them (R14), the
+  exact default ignore list and ignored items as a count, not problems
+  (R16), as the rulings say.
+- A circle of waits is broken by parking a node under one of the
+  engine's own temp names, tied to that node (R15: no invented visible
+  names); the scanner follows a node parked so.
+- Temp files the journal does not name go to the holding area, never
+  unlinked (R14, R17).
+- Read-only moves are undone on the device, a late 403 included (R18);
+  an unknown hash on Hearth is not a difference (R19); an item moved out
+  of a folder the other side deleted survives (R8); a name this device
+  cannot hold leaves only the name behind (R10).
+
 ## 2026-11-24: the reference model stands alone (sync-model)
 
 crates/model depends on no crate of the workspace and on one outside

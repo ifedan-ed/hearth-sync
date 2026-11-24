@@ -257,6 +257,9 @@ pub struct Observation {
     pub mass_change: Option<MassChangeView>,
     /// Mount roots found missing on disk (their mounts are left alone).
     pub absent_roots: Vec<NodeId>,
+    /// How many items on disk the ignore rules keep out of sync, as the
+    /// last scans found them (R16: shown as a count, never as problems).
+    pub ignored: u64,
 }
 
 impl Observation {
@@ -275,6 +278,7 @@ pub fn observe(
     phase: Phase,
     absent_roots: &BTreeSet<NodeId>,
     ignore: &crate::ignore::IgnoreRules,
+    ignored: u64,
 ) -> StoreResult<Observation> {
     let unselected: BTreeSet<NodeId> = store.unselected()?.into_iter().collect();
     let mount_rows = store.mounts()?;
@@ -421,5 +425,6 @@ pub fn observe(
         held,
         mass_change,
         absent_roots: absent_roots.iter().copied().collect(),
+        ignored,
     })
 }

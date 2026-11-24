@@ -20,11 +20,11 @@
 //! `.hearthignore` files inside the tree are not read (3.14: a synced file
 //! must not change what another device ignores).
 
-/// The list that ships (docs/sync.md 3.9 and 3.14): lock and temporary
-/// files of Office, LibreOffice and editors, and operating system litter.
-/// The engine's own names are kept out by `names::is_engine_name`, not by
-/// this list, so editing the list can never make the engine sync its own
-/// state.
+/// The list that ships, exactly as docs/sync.md 3.14 gives it: lock and
+/// temporary files of Office, LibreOffice and editors, operating system
+/// litter, and the engine's own names. The engine's names are also kept
+/// out by `names::is_engine_name` whatever the list says, so editing the
+/// list can never make the engine sync its own state (R14).
 pub const DEFAULT_RULES: &[&str] = &[
     "~$*",
     ".~lock.*#",
@@ -32,6 +32,8 @@ pub const DEFAULT_RULES: &[&str] = &[
     ".DS_Store",
     "Thumbs.db",
     "desktop.ini",
+    "*.hearthtmp",
+    "/.hearthsync/",
 ];
 
 /// One compiled pattern.

@@ -165,6 +165,7 @@ fn planner_pass(store: &SqliteStore, nodes: &[NodeId]) -> (f64, BTreeMap<String,
         &none,
         250,
         &none,
+        &none,
         NodeId(1),
         &next,
     );

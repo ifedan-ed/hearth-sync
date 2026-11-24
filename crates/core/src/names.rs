@@ -222,15 +222,14 @@ pub fn key_of_str(s: &str, rules: &VolumeRules) -> NameKey {
 /// whose lowercase is several characters keep their own form, as simple
 /// folding does (the German sharp s stays itself; full folding would make
 /// it `ss`, which no volume does).
+///
+/// Applied to the NFC name and not normalised again (docs/sync.md 3.17,
+/// R7: statuses C and S of CaseFolding.txt, never T and never F). The
+/// Unicode version is the standard library's (`char::UNICODE_VERSION` of
+/// the pinned compiler, named in docs/decisions.md); changing it is a
+/// migration of the database's keys.
 fn simple_fold(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        out.push(fold_char(c));
-    }
-    // Folding can produce a sequence that is not NFC (rare: a folded base
-    // letter before a combining mark); normalise again so the key is
-    // canonical.
-    to_nfc(&out)
+    s.chars().map(fold_char).collect()
 }
 
 /// One character's simple case fold.
@@ -345,7 +344,7 @@ pub enum HoldRefusal {
 /// `at_root` is true for names directly in the sync root, where
 /// `.hearthsync` is the engine's own folder.
 pub fn hold_refusal(name: &str, rules: &VolumeRules, at_root: bool) -> Option<HoldRefusal> {
-    if is_engine_name(name, at_root) {
+    if is_engine_name(name, at_root, rules) {
         return Some(HoldRefusal::EngineName);
     }
     if name.contains('/') || name.contains('\0') {
@@ -397,12 +396,15 @@ fn is_windows_device_name(name: &str) -> bool {
     }
 }
 
-/// The engine's own names: `.hearthsync` at a sync root (its state and
-/// holding folder) and any name ending `.hearthtmp` (a temp file beside a
-/// target). Never synced in either direction (sync-api.md 13, last
-/// paragraph).
-pub fn is_engine_name(name: &str, at_root: bool) -> bool {
-    (at_root && name == ENGINE_DIR) || name.ends_with(TEMP_SUFFIX)
+/// The engine's own names (docs/sync.md 3.17, R14): `.hearthsync` at a
+/// sync root (its state and holding folder) and any name ending
+/// `.hearthtmp` in any folder, compared as the volume compares names.
+/// Never synced in either direction (sync-api.md 13).
+pub fn is_engine_name(name: &str, at_root: bool, rules: &VolumeRules) -> bool {
+    let key = key_of_str(name, rules).0;
+    let dir = key_of_str(ENGINE_DIR, rules).0;
+    let suffix = key_of_str(TEMP_SUFFIX, rules).0;
+    (at_root && key == dir) || key.ends_with(&suffix)
 }
 
 /// The engine's folder at the sync root (docs/sync.md 3.7).
@@ -410,25 +412,23 @@ pub const ENGINE_DIR: &str = ".hearthsync";
 /// The ending of a temp file made beside its target (docs/sync.md 3.7).
 pub const TEMP_SUFFIX: &str = ".hearthtmp";
 
-/// Cleans a device name for use inside a conflict copy's name: characters
-/// any OS refuses and control characters removed, trailing dots and
-/// spaces removed, cut to 30 characters (docs/sync.md 3.5.1). Returns
-/// none when nothing is left, which the engine refuses as a setting.
-pub fn clean_device_name(device: &str) -> Option<String> {
-    let cleaned: String = device
+/// The device label inside a conflict copy's name (docs/sync.md 3.17, R3):
+/// the device's name in NFC; `< > : " / \ | ? *` and control characters
+/// removed; cut to 30 characters (scalar values); leading spaces and
+/// trailing dots and spaces removed; `device` if nothing is left.
+pub fn device_label(device: &str) -> String {
+    let cleaned: String = to_nfc(device)
         .chars()
         .filter(|c| {
-            (*c as u32) >= 32
-                && *c as u32 != 0x7F
-                && !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+            !c.is_control() && !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
         })
         .take(30)
         .collect();
-    let trimmed = cleaned.trim_end_matches(['.', ' ']).trim_start();
+    let trimmed = cleaned.trim_start_matches(' ').trim_end_matches(['.', ' ']);
     if trimmed.is_empty() {
-        None
+        "device".to_owned()
     } else {
-        Some(to_nfc(trimmed))
+        trimmed.to_owned()
     }
 }
 
@@ -436,7 +436,7 @@ pub fn clean_device_name(device: &str) -> Option<String> {
 /// `<stem> (conflict <device>, <yyyy-MM-dd HH.mm.ss>[ n])<.ext>`.
 ///
 /// - `original`: the name the two versions both wanted (NFC text).
-/// - `device`: already cleaned with `clean_device_name`.
+/// - `device`: the label from `device_label`.
 /// - `local_time_s`: the local file's last change, in seconds of local
 ///   time (UTC plus the offset the clock reports for that moment).
 /// - `number`: 1 for the first try; 2, 3... when the name is taken.

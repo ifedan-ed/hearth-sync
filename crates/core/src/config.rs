@@ -3,7 +3,7 @@
 //! values the plan sets, each named and explained here, so nothing is a
 //! hidden default buried in code.
 
-use crate::names::{VolumeRules, clean_device_name};
+use crate::names::VolumeRules;
 
 /// Every setting of one sync root.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,8 +59,6 @@ pub struct Config {
 /// A setting the engine refuses.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConfigError {
-    /// The device name has nothing left after cleaning.
-    DeviceName,
     /// A size or count is zero where it cannot be.
     Zero(&'static str),
 }
@@ -95,9 +93,6 @@ impl Config {
 
     /// Checks the settings; the engine will not start on bad ones.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if clean_device_name(&self.device_name).is_none() {
-            return Err(ConfigError::DeviceName);
-        }
         for (v, name) in [
             (self.small_file_max, "small_file_max"),
             (self.chunk_size, "chunk_size"),

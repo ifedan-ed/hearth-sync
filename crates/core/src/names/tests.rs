@@ -210,15 +210,15 @@ fn conflict_names_follow_the_plan() {
 
 #[test]
 fn device_names_are_cleaned() {
-    assert_eq!(
-        clean_device_name("Dan's:Laptop?").as_deref(),
-        Some("Dan'sLaptop")
-    );
-    assert_eq!(clean_device_name("  ...").as_deref(), None);
-    assert_eq!(
-        clean_device_name(&"x".repeat(50)).map(|s| s.len()),
-        Some(30)
-    );
+    assert_eq!(device_label("Dan's:Laptop?"), "Dan'sLaptop");
+    assert_eq!(device_label("  ..."), "device");
+    assert_eq!(device_label(""), "device");
+    assert_eq!(device_label("  Laptop. "), "Laptop");
+    assert_eq!(device_label(&"x".repeat(50)).chars().count(), 30);
+    // 30 scalar values, not bytes.
+    assert_eq!(device_label(&"\u{e9}".repeat(40)).chars().count(), 30);
+    // NFC first: a decomposed name is labelled composed.
+    assert_eq!(device_label("Cafe\u{301}"), "Caf\u{e9}");
 }
 
 #[test]
