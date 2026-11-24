@@ -2,6 +2,14 @@
 
 Newest first. What was done, what is half done, what is next.
 
+## 2026-11-24, night: rulings on M1 to M16 and the judges' disagreements
+
+Docs only. Decided in Hearth's docs/sync.md 3.17 (R1 to R19); the table
+of who changes is in docs/contract-questions.md, "Rulings". Next, in
+code: the engine (R8, R10, R16, R18, R19), the model (R1, R4, R8, R10,
+R16), the simulator (R10, R16, R17); then `CONTRACT` moves to the
+contract's entry (c).
+
 ## 2026-11-24, later: CI findings fixed, contract (b) followed (sync-core)
 
 - The build copy's CI (2,048 cases) found two faults in the

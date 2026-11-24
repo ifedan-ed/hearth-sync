@@ -24,6 +24,37 @@ the question is closed here with the commit.
   kept aside below an id it does not hold. The engine applies both; the
   test kit's Hearth follows the new rule (no marker per descendant).
 
+## Rulings (2026-11-24): M1 to M16 and the judges' disagreements
+
+Decided in the Hearth repository, docs/sync.md section 3.17 (R1 to
+R19), with the reason for each; the contract's words follow in its
+changelog entry 2026-11-24 (c) (still version 1). Decided from the
+documents alone. `CONTRACT` keeps its pin until the code follows R14
+and R19; then it moves to a commit that holds (c).
+
+| Question | Ruling (sync.md 3.17) | Who changes |
+| --- | --- | --- |
+| M1 mass change | R1: files deleted or overwritten, per mount and side, by count against the synced tree; conflict copies do not count | model (overwrites count) |
+| M2 extension | R2: after the last dot, when it is neither first nor last | none (as the model read it) |
+| M3 device label | R3: NFC, cleaned, 30 characters, trimmed; `device` if empty | both check against the text |
+| M4 two local names, one NFC | R4: the synced one, else the NFC one, else first by bytes; the other listed `name_clash` | model; engine if its choice differs |
+| M5 replaced root, "go on" | R5: a new root with no history, synced as after a lost database | none |
+| M6 a share that leaves | R6: the local folder stays as it is, unsynced, listed `no_longer_shared`; no rename, nothing uploaded | model if it expects the renamed folder |
+| M7 case folding | R7: simple folding, C and S, no T or F, one Unicode version named in docs/decisions.md | both name the version |
+| M8 moved out of a deleted folder | R8: survives at its new place when it was deleted only with its folder; a direct delete still applies | engine, model |
+| M9 edit against delete, read-only | R9: stays local, listed `read_only_edit` | none |
+| M10, M15 a name the device cannot hold | R10: only the name stays behind; content and a folder's contents keep syncing by identity | engine, model, simulator |
+| M11 a remote file's conflict copy | R11: the acting device's label, the file's own time | none |
+| M12 holding area's age | R12: age or low space, and always proof the bytes exist elsewhere | none |
+| M13 deleted files back after a lost database | R13: yes, and the plan says so | none |
+| M14 `*.hearthtmp` | R14: the engine's in every folder; never unlinked unless tied to an operation | model-needs' `engine_name` row |
+| M16 no invented names | R15: as read | none |
+| name clash judged untrue | R4: the engine's listing is true; device trees are kept by names on disk | model |
+| ignored names | R16: outside sync both ways, not listed as problems, default list in sync.md 3.14 | model, simulator; engine for the ignored view |
+| a replaced file in `.hearthsync/tmp` | R17: held | simulator (`holding` covers `held/`, `tmp/` and `*.hearthtmp`) |
+| a move the rights refuse | R18: undone on the device; listed only if it cannot go back | engine |
+| unknown hash and convergence | R19: not a difference; etag and size stand in | engine's convergence check |
+
 The questions as they were asked follow.
 
 ## Q1. The holding area needs to know whether Hearth still has some bytes
