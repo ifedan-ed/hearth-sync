@@ -7,6 +7,25 @@ data. The contract is changed only in the Hearth repository (its section
 0.3); when an answer lands there, the code and `CONTRACT` move together and
 the question is closed here with the commit.
 
+## Answered (contract 2026-11-24 (b), commit a0e967e, pinned in CONTRACT)
+
+- Q1: an API matter for the server's helper (sync-api.md 20, point 9);
+  the engine's conservative rule stands until then.
+- Q2: the engine's reading is the intended behaviour (20, point 10).
+- Q3: `list` is set on every folder placed by a move or restore; a folder
+  that arrives from another mount is listed (6.3, 6.6 rule 4). The engine
+  already listed it.
+- Q4: `/sync/tree` answers `rootSize` (advice only). The engine reads it
+  into `TreePage::root_size`; step 1 does not ask by size yet.
+- Q5: recorded as the engine's choice (20, point 11).
+- Q6: one marker per departing folder stays; in addition the server
+  delivers the marker of a move inside the mount whose entry has left the
+  mount by the time the feed is read. 6.6 rule 6 now drops what a client
+  kept aside below an id it does not hold. The engine applies both; the
+  test kit's Hearth follows the new rule (no marker per descendant).
+
+The questions as they were asked follow.
+
 ## Q1. The holding area needs to know whether Hearth still has some bytes
 
 docs/sync.md 3.7 empties a holding-area entry after its days "only for

@@ -120,6 +120,12 @@ The random tests take their size from the environment:
 | `MODEL_SEEDS` | 100 | Seeds the model's property run tries |
 | `MODEL_FIRST_SEED` | 0 | The first of them, to spread long runs |
 
+For `PROPTEST_CASES`, the CI on every push uses 2,048 and the nightly
+run 200,000; a failing case prints its seed and shrunk input, and is kept
+as a named regression test (crates/core/src/tests/props.rs).
+
+    PROPTEST_CASES=20000 ci/cargo.sh test -p hearth-sync-core --lib -- props
+
 ## Licence
 
 AGPL-3.0-or-later. See `LICENSE`.

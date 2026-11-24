@@ -2,6 +2,25 @@
 
 Newest first. What was done, what is half done, what is next.
 
+## 2026-11-24, later: CI findings fixed, contract (b) followed (sync-core)
+
+- The build copy's CI (2,048 cases) found two faults in the
+  case-insensitive property test, and local runs of 20,000 cases found
+  four more. Fixed at the root, each with a named regression test in
+  crates/core/src/tests/props.rs: a folder read where names pass between
+  nodes (a store constraint error: moving nodes now let go of their names
+  first); a folder Hearth deleted around a listed item (it now stays with
+  the item); a circle of waits through folders not yet on disk (broken by
+  a parking name); a folder deleted on disk that Hearth moved onto a name
+  the disk gave another folder (Hearth's keeps the name, the other steps
+  aside).
+- The engine follows contract 2026-11-24 (b), commit a0e967e: move
+  markers for entries gone with a folder, the amended rule 6, `rootSize`.
+- Property cases: the nightly workflow runs 200,000 per property; CI on
+  every push 2,048; here the case-insensitive and the case-sensitive
+  random-run properties passed 20,000 cases each, clean, after the last
+  fix (the runs before it found the faults above at 627, 2,990, 13,105
+  and 17,088 cases).
 ## 2026-11-24: documentation catch-up (docs only)
 
 - README: the status and "What exists" now name the reference model and

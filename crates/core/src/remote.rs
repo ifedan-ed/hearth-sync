@@ -178,6 +178,10 @@ pub struct ChangesPage {
 pub struct TreePage {
     /// The storage's epoch now.
     pub epoch: String,
+    /// The bytes of everything below the root as the server last counted
+    /// them (6.4 `rootSize`): advice for asking before a large folder,
+    /// never a condition. Step 1 does not ask by size yet.
+    pub root_size: Option<u64>,
     /// Entries in no promised order.
     pub entries: Vec<Entry>,
     /// The next page; none on the last.

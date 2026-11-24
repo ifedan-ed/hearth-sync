@@ -304,6 +304,7 @@ impl<S: Store> Engine<S> {
         // Rows: nodes that move or are new take their names after every
         // node that leaves a name here has let go of it.
         let mut later = Vec::new();
+        let mut finals = Vec::new();
         for (i, (e, key, kind)) in cands.into_iter().enumerate() {
             let Some(n) = claimed[i] else {
                 later.push((e, key, kind));
@@ -327,7 +328,17 @@ impl<S: Store> Engine<S> {
                 if row.hash.is_none() && kind == Kind::File {
                     self.hash_queue.insert(n);
                 }
-                batch.push(Write::PutLocal(row));
+                if row.parent != l.parent || row.key != l.key {
+                    // Names may pass between nodes of this folder in one
+                    // read (a swap, or a rename onto a name another moved
+                    // item leaves): every moving node first lets go of its
+                    // old name under a key no real name can have, then
+                    // all take their new names.
+                    let mut parked = l.clone();
+                    parked.key = crate::names::NameKey(format!("\u{0}{}", n.0));
+                    batch.push(Write::PutLocal(parked));
+                }
+                finals.push(Write::PutLocal(row));
                 batch.push(Write::MarkDirty(n));
             } else if kind == Kind::File && l.hash.is_none() {
                 self.hash_queue.insert(n);
@@ -336,6 +347,7 @@ impl<S: Store> Engine<S> {
                 self.scan_queue.insert(n, true);
             }
         }
+        batch.extend(finals);
         for (e, key, kind) in later {
             // New. If a mount's root belongs exactly here and has no local
             // picture yet, this folder is that root.

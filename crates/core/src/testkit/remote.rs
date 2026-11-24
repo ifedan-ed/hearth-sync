@@ -60,6 +60,9 @@ pub struct FakeRemote {
     pub epoch: String,
     entries: BTreeMap<u64, FEntry>,
     markers: Vec<(u64, u64, GoneReason)>,
+    /// Moves inside the mount, (seq, id): their markers are delivered when
+    /// the entry is no longer in the mount at reading time (6.3, Q6).
+    moves: Vec<(u64, u64)>,
     root: u64,
     next_id: u64,
     next_etag: u64,
@@ -121,6 +124,7 @@ impl FakeRemote {
             epoch: "e1".into(),
             entries,
             markers: Vec::new(),
+            moves: Vec::new(),
             root: 100,
             next_id: 101,
             next_etag: 1,
@@ -364,17 +368,10 @@ impl FakeRemote {
     fn trash(&mut self, id: u64) {
         let seq = self.bump();
         for x in self.below(id) {
-            if let Some(e) = self.entries.remove(&x) {
-                if let Some(h) = e.hash {
-                    self.kept.insert(h);
-                }
-                // An entry inside may be held elsewhere by a client that
-                // never saw it move in: every entry below gets its own
-                // marker (docs/contract-questions.md Q6). Extra markers are
-                // harmless (6.6 rule 6).
-                if x != id {
-                    self.markers.push((seq, x, GoneReason::Trashed));
-                }
+            if let Some(e) = self.entries.remove(&x)
+                && let Some(h) = e.hash
+            {
+                self.kept.insert(h);
             }
         }
         self.markers.push((seq, id, GoneReason::Trashed));
@@ -486,6 +483,7 @@ impl FakeRemote {
         }
         let seq = self.bump();
         let etag = self.new_etag();
+        self.moves.push((seq, id));
         if let Some(e) = self.entries.get_mut(&id) {
             e.parent = Some(parent);
             e.name = (*name).to_owned();
@@ -550,6 +548,7 @@ impl FakeRemote {
     pub fn expire_markers(&mut self) {
         self.oldest_kept = self.seq;
         self.markers.clear();
+        self.moves.clear();
     }
 
     /// Requests that change something or ask for something other than
@@ -631,6 +630,21 @@ impl Remote for FakeRemote {
                 items.push((e.seq, 1, Change::Upsert(self.entry_of(e))));
             }
         }
+        // 6.3, decided at reading time: a move inside the mount whose entry
+        // has left the mount since (with a folder it was moved into).
+        for (seq, id) in &self.moves {
+            if *seq > from && !self.entries.contains_key(id) {
+                items.push((
+                    *seq,
+                    0,
+                    Change::Gone {
+                        id: Self::rid(*id),
+                        seq: *seq,
+                        reason: GoneReason::Moved,
+                    },
+                ));
+            }
+        }
         items.sort_by_key(|a| (a.0, a.1));
         let limit = limit.max(1) as usize;
         let mut out = Vec::new();
@@ -696,8 +710,13 @@ impl Remote for FakeRemote {
             .map(|i| self.entry_of(&self.entries[i]))
             .collect();
         let next = (offset + limit < ids.len()).then(|| format!("p{}:{cur}", offset + limit));
+        let root_size = ids
+            .iter()
+            .map(|i| self.entries[i].content.len() as u64)
+            .sum();
         Ok(TreePage {
             epoch: self.epoch.clone(),
+            root_size: Some(root_size),
             entries: slice,
             page: next,
             cursor: self.cursor(cur),
@@ -875,6 +894,7 @@ impl Remote for FakeRemote {
             }
             let seq = s.bump();
             let etag = s.new_etag();
+            s.moves.push((seq, i));
             let x = s
                 .entries
                 .get_mut(&i)

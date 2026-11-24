@@ -692,16 +692,25 @@ impl<S: Store> Engine<S> {
         reason: GoneReason,
         round: u64,
     ) -> EngineResult<()> {
-        let Some(n) = ov.node_by_remote(id)? else {
+        let held = match ov.node_by_remote(id)? {
+            Some(n) => ov.node(n)?.and_then(|rec| rec.remote).map(|r| (n, r)),
+            None => None,
+        };
+        let Some((n, r)) = held.filter(|(_, r)| r.mount == m.id) else {
+            // Rule 6 (amended): an id not held here. What was kept aside
+            // below it (arrived before its parent) with a number at or
+            // below the marker's goes, or it would wait for ever.
+            for c in ov.remote_children(id)? {
+                if let Some(cr) = ov.node(c)?.and_then(|x| x.remote)
+                    && cr.mount == m.id
+                    && cr.seq <= seq
+                {
+                    Self::drop_remote_subtree(ov, c, cr)?;
+                }
+            }
             return Ok(());
         };
-        let Some(rec) = ov.node(n)? else {
-            return Ok(());
-        };
-        let Some(r) = rec.remote else {
-            return Ok(());
-        };
-        if r.mount != m.id || r.seq > seq {
+        if r.seq > seq {
             return Ok(());
         }
         // The entry and everything held below it, deepest last is fine:
@@ -725,6 +734,26 @@ impl<S: Store> Engine<S> {
                     ov.put_remote(d)?;
                 }
             }
+            ov.push(Write::MarkDirty(node));
+        }
+        Ok(())
+    }
+
+    /// Removes the remote pictures of a node and of everything held below
+    /// it on Hearth's side.
+    fn drop_remote_subtree(ov: &mut Overlay<'_>, n: NodeId, r: RemoteRow) -> EngineResult<()> {
+        let mut stack = vec![(n, r)];
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some((node, row)) = stack.pop() {
+            if !seen.insert(node) {
+                continue;
+            }
+            for c in ov.remote_children(&row.id)? {
+                if let Some(cr) = ov.node(c)?.and_then(|x| x.remote) {
+                    stack.push((c, cr));
+                }
+            }
+            ov.del_remote(node)?;
             ov.push(Write::MarkDirty(node));
         }
         Ok(())

@@ -611,17 +611,20 @@ impl<'a> Planner<'a> {
             return Ok(Decision::Op(PlannedOp::new(OpKind::RemoveLocalFolder)));
         }
         let mut unknown = false;
+        let mut leaving = None;
         for c in kids {
             match self.local_child_survives(c)? {
                 Some(true) => return self.mkdir_remote(rec, mount),
-                Some(false) => {}
+                Some(false) => leaving = leaving.or(Some(c)),
                 None => unknown = true,
             }
         }
+        // Wait for a child that leaves: its going (or its being listed)
+        // wakes this folder.
         Ok(if unknown {
             Decision::NotReady
         } else {
-            Decision::Wait(None)
+            Decision::Wait(leaving)
         })
     }
 
@@ -631,6 +634,11 @@ impl<'a> Planner<'a> {
         let Some(rec) = self.store.node(n)? else {
             return Ok(Some(false));
         };
+        // A listed item is left where it is (I10), so it stays here, and so
+        // does the folder that holds it.
+        if self.problems.contains(&n) && rec.local.is_some() {
+            return Ok(Some(true));
+        }
         let (Some(l), Some(s)) = (&rec.local, &rec.synced) else {
             return Ok(Some(rec.local.is_some()));
         };
@@ -688,12 +696,13 @@ impl<'a> Planner<'a> {
             // refused: list nothing, plan it again when the feed moves.
             return Ok(Decision::Wait(None));
         }
+        let first = kids.first().copied();
         for c in kids {
             if self.remote_child_survives(c)? {
                 return self.mkdir_local(rec);
             }
         }
-        Ok(Decision::Wait(None))
+        Ok(Decision::Wait(first))
     }
 
     /// Whether an entry inside a folder deleted locally stays (new or
@@ -702,6 +711,10 @@ impl<'a> Planner<'a> {
         let Some(rec) = self.store.node(n)? else {
             return Ok(false);
         };
+        // A listed item is left where it is on Hearth too.
+        if self.problems.contains(&n) && rec.remote.is_some() {
+            return Ok(true);
+        }
         let (Some(r), Some(s)) = (&rec.remote, &rec.synced) else {
             return Ok(rec.remote.is_some());
         };
@@ -1034,8 +1047,9 @@ impl<'a> Planner<'a> {
         };
         match &prec.local {
             Some(pl) if pl.kind == Kind::Folder => {}
-            // The folder is not on disk yet: its own step brings it.
-            _ => return Ok(Target::Wait(Some(parent))),
+            // The folder is not on disk yet: its own step brings it (unless
+            // it waits, through others, for this node).
+            _ => return self.wait_or_break_cycle(rec, parent),
         }
         if let Some(why) = hold_refusal(&place.name, &self.cfg.volume, parent == self.root) {
             return Ok(Target::Instead(Decision::Problem(
@@ -1090,23 +1104,45 @@ impl<'a> Planner<'a> {
         self.wait_or_break_cycle(rec, o)
     }
 
-    /// The node whose local place a node wants to move into, when it wants
-    /// to move locally (its place on Hearth differs from the disk's).
+    /// What a node waits for before it can take its place on disk (Hearth's
+    /// place): the folder, if that is not on disk yet, or the node holding
+    /// the name there. None when it does not want a new place on disk.
     fn local_blocker(&self, n: NodeId) -> StoreResult<Option<NodeId>> {
         let Some(rec) = self.store.node(n)? else {
             return Ok(None);
         };
-        let (Some(lp), Some(rp)) = (self.local_place(&rec), self.remote_place(&rec)?) else {
+        let Some(rp) = self.remote_place(&rec)? else {
             return Ok(None);
         };
-        let (true, Some(parent)) = (lp != rp, rp.parent) else {
+        if self.local_place(&rec).as_ref() == Some(&rp) {
+            return Ok(None);
+        }
+        let Some(parent) = rp.parent else {
             return Ok(None);
         };
+        let on_disk = self
+            .store
+            .node(parent)?
+            .is_some_and(|p| p.local.is_some_and(|l| l.kind == Kind::Folder));
+        if !on_disk {
+            return Ok(Some(parent));
+        }
         let key = key_of_str(&rp.name, &self.cfg.volume);
         Ok(self
             .store
             .local_child_by_key(parent, &key)?
             .filter(|o| *o != n))
+    }
+
+    /// Whether a node is on disk somewhere else than Hearth's place for it,
+    /// so it can step to a parking name to break a circle of waits.
+    fn can_park(&self, n: NodeId) -> StoreResult<bool> {
+        let Some(rec) = self.store.node(n)? else {
+            return Ok(false);
+        };
+        Ok(rec.local.is_some()
+            && rec.synced.is_some()
+            && self.local_place(&rec) != self.remote_place(&rec)?)
     }
 
     /// Waits for the holder of a name, unless the holders wait for each
@@ -1123,7 +1159,15 @@ impl<'a> Planner<'a> {
         for _ in 0..64 {
             match self.local_blocker(cur)? {
                 Some(next) if next == me => {
-                    if cycle.iter().min() == Some(&me) {
+                    // The circle is broken by its lowest member that is on
+                    // disk and can step aside; the others wait for it.
+                    let mut parker: Option<NodeId> = None;
+                    for m in &cycle {
+                        if self.can_park(*m)? && parker.is_none_or(|p: NodeId| *m < p) {
+                            parker = Some(*m);
+                        }
+                    }
+                    if parker == Some(me) {
                         let Some(l) = &rec.local else {
                             return Ok(Target::Wait(Some(o)));
                         };
@@ -1222,10 +1266,16 @@ impl<'a> Planner<'a> {
                     let base = view::base_place(&orec);
                     self.remote_place(&orec)? == base && self.local_place(&orec) != base
                 }
-                (None, Some(os)) => match or.kind {
-                    Kind::File => or.hash == os.hash,
-                    Kind::Folder => true,
-                },
+                // Gone from the disk: it leaves Hearth's name by a delete,
+                // unless Hearth itself moved it to this name (then Hearth's
+                // place wins and it comes back to the disk there: E, G).
+                (None, Some(os)) => {
+                    let unchanged = match or.kind {
+                        Kind::File => or.hash == os.hash,
+                        Kind::Folder => true,
+                    };
+                    unchanged && self.remote_place(&orec)? == view::base_place(&orec)
+                }
                 _ => false,
             };
             if o_leaves || self.busy(&o) {
@@ -1408,8 +1458,25 @@ impl<'a> Planner<'a> {
         if let Some(c) = self.store.local_children(rec.node)?.first() {
             return Ok(Decision::Wait(Some(*c)));
         }
-        if let Some(c) = self.store.synced_children(rec.node)?.first() {
-            return Ok(Decision::Wait(Some(*c)));
+        let synced_kids = self.store.synced_children(rec.node)?;
+        if let Some(c) = synced_kids.first() {
+            // Children only Hearth has, listed as problems (a name this
+            // device cannot hold), keep their base pointing here for ever.
+            // Their base can be forgotten safely: with nothing on disk, a
+            // node without a base is only ever downloaded, never deleted
+            // on Hearth. Then this folder can go.
+            let mut forget = Vec::new();
+            for k in &synced_kids {
+                let listed_remote_only = self.problems.contains(k)
+                    && self.store.node(*k)?.is_some_and(|r| r.local.is_none());
+                if !listed_remote_only {
+                    return Ok(Decision::Wait(Some(*c)));
+                }
+                forget.push(Write::DelSynced(*k));
+                forget.push(Write::MarkDirty(*k));
+            }
+            forget.push(Write::MarkDirty(rec.node));
+            return Ok(Decision::Record(forget));
         }
         if let Some(r) = &rec.remote
             && let Some(c) = self.store.remote_children(&r.id)?.first()

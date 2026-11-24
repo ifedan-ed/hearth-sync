@@ -214,7 +214,7 @@ fn random_case(
             .iter()
             .filter(|p| p.kind == crate::tree::ProblemKind::Stuck)
             .collect();
-        prop_assert!(stuck.is_empty(), "stuck: {:?}", stuck);
+        prop_assert!(stuck.is_empty(), "stuck: {:?}\n{:#?}", stuck, obs.nodes);
     }
     let world = guarantees::WorldHashes {
         device: w.fs.files().into_iter().map(|f| f.hash).collect(),
@@ -295,4 +295,104 @@ proptest! {
         let strip = |s: &str| s.lines().filter(|l| !l.contains("MountRow") && !l.starts_with("meta feed_round")).collect::<Vec<_>>().join("\n");
         prop_assert_eq!(strip(&before_dump), strip(&after_dump));
     }
+}
+
+/// Regression, from the build copy's CI (2026-11-24): two local moves on a
+/// case-insensitive volume, the second onto a name the first one left
+/// (`b/F.txt` is `b/f.txt` there). Both nodes changed names in one read
+/// of the folder, and the store refused the batch (a name key held twice).
+#[test]
+fn regression_two_moves_pass_a_name_in_one_read() {
+    let r = random_case(
+        VolumeRules::WINDOWS,
+        0,
+        &[Change::Move(0, 0, 0, 1), Change::Move(1, 2, 0, 2)],
+        &[],
+        None,
+    );
+    assert!(r.is_ok(), "{r:?}");
+}
+
+/// Regression, from the build copy's CI (2026-11-24): on a
+/// case-insensitive volume Hearth moves `c/f.txt` to `a/F.txt` (one name
+/// with `a/f.txt` here, so it is listed and stays in `c`) and then deletes
+/// `c`. The folder waited for a child that will never leave; it now stays
+/// with it (3.5 F: a folder survives as far as what is in it does).
+#[test]
+fn regression_folder_deleted_around_a_listed_item() {
+    let r = random_case(
+        VolumeRules::WINDOWS,
+        0,
+        &[],
+        &[Change::Move(2, 0, 0, 2), Change::DeleteFolder(2)],
+        None,
+    );
+    assert!(r.is_ok(), "{r:?}");
+}
+
+/// Regression, found by the local run of 20,000 cases (2026-11-24): the
+/// folder `c` is deleted on disk while Hearth moves `a` into `c`, makes a
+/// new `a`, and moves `c` into it. The old `a` waited for `c` to be made,
+/// `c` for the new `a`, the new `a` for the old one to free its name: a
+/// circle, now broken by the old `a` stepping to a parking name.
+#[test]
+fn regression_a_circle_of_folder_waits() {
+    let r = random_case(
+        VolumeRules::WINDOWS,
+        0,
+        &[Change::DeleteFolder(2)],
+        &[
+            Change::MoveFolder(0, 2),
+            Change::Write(0, 0, 0),
+            Change::MoveFolder(2, 0),
+        ],
+        None,
+    );
+    assert!(r.is_ok(), "{r:?}");
+    let r = random_case(
+        VolumeRules::LINUX,
+        0,
+        &[Change::DeleteFolder(2)],
+        &[
+            Change::MoveFolder(0, 2),
+            Change::Write(0, 0, 0),
+            Change::MoveFolder(2, 0),
+        ],
+        None,
+    );
+    assert!(r.is_ok(), "{r:?}");
+}
+
+/// Regression, found by the local run of 20,000 cases (2026-11-24): the
+/// disk deletes `a` and moves `c` to `b/moved`, while Hearth edits inside
+/// `a` and moves `a` to `b/moved`. Hearth's `a` comes back to the disk
+/// at its place (it holds an edit), so it keeps the name and the local
+/// `c` steps aside, instead of each waiting for the other.
+#[test]
+fn regression_a_deleted_folder_hearth_moved_keeps_its_name() {
+    for rules in [VolumeRules::LINUX, VolumeRules::WINDOWS] {
+        let r = random_case(
+            rules,
+            0,
+            &[Change::DeleteFolder(0), Change::MoveFolder(2, 1)],
+            &[Change::Write(0, 0, 0), Change::MoveFolder(0, 1)],
+            None,
+        );
+        assert!(r.is_ok(), "{rules:?}: {r:?}");
+    }
+}
+
+/// Regression, found by the local run of 20,000 cases (2026-11-24): the
+/// disk deletes `a` while Hearth moves `a/f.txt` to `c/F.txt` (one name
+/// with `c/f.txt` on this volume) and edits it.
+#[test]
+fn regression_a_moved_out_edit_onto_a_case_twin() {
+    let r = random_case(
+        VolumeRules::WINDOWS,
+        0,
+        &[Change::DeleteFolder(0)],
+        &[Change::Move(0, 0, 2, 2), Change::Write(2, 2, 0)],
+        None,
+    );
+    assert!(r.is_ok(), "{r:?}");
 }
