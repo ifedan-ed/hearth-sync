@@ -1,0 +1,11 @@
+# The sync API this repository is built against.
+#
+# The contract is one document, docs/sync-api.md, in the Hearth server's
+# repository. It is changed only there. This file pins the commit of it
+# that the code and the simulated server here implement; the tests name
+# it. To move to a newer contract: read its changelog, change the code and
+# the simulator, then change this pin in the same commit.
+repository = hearth
+path = docs/sync-api.md
+commit = 0633915113d07db51d651e2be8b0375eb637cd1d
+version = 1

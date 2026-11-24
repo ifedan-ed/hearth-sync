@@ -1,0 +1,16 @@
+[package]
+name = "hearth-sync-cli"
+description = "The headless client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# The program people type is `hearth-sync`.
+[[bin]]
+name = "hearth-sync"
+path = "src/main.rs"

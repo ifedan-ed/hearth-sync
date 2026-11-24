@@ -1,0 +1,36 @@
+# Hearth's sync engine: one core, used by every client.
+#
+# One job per crate. The order below is the order of dependence: a crate
+# may depend only on crates listed above it, and hearth-sync-core depends
+# on none of them (it reaches disk, network, time and randomness only
+# through its own interfaces, which the others implement).
+[workspace]
+resolver = "3"
+members = [
+    "crates/core",
+    "crates/store",
+    "crates/fs",
+    "crates/remote",
+    "crates/model",
+    "crates/sim",
+    "crates/cli",
+    "crates/ffi",
+    "crates/desktop",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.100"
+license = "AGPL-3.0-or-later"
+publish = false
+
+# Held on every crate: a public item without a comment saying what it is
+# for does not build in CI (clippy runs with warnings as errors).
+[workspace.lints.rust]
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"

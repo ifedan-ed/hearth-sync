@@ -1,0 +1,7 @@
+# One compiler for everyone and every machine that builds this: a newer
+# rustfmt or clippy must never fail a build that passed yesterday. Raised
+# on purpose, in a commit of its own, together with the CI image.
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

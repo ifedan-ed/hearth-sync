@@ -1,0 +1,11 @@
+[package]
+name = "hearth-sync-model"
+description = "The reference model and the invariant checkers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

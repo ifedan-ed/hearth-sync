@@ -1,0 +1,46 @@
+# Every push and pull request: formatting, lints with warnings as errors,
+# and the tests. Only what is light runs here (the runner is small and
+# shared): the long randomised suites, the three operating systems, the
+# crash tests and the benchmarks run on GitHub Actions from the public
+# mirror.
+#
+# No actions are used (fetching one from outside has hung the runner
+# before), so the checkout is done by hand and there is no build cache.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_BUILD_JOBS: "4"
+  CARGO_TERM_COLOR: never
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  checks:
+    runs-on: docker
+    container:
+      # The compiler rust-toolchain.toml pins, by digest.
+      image: docker.io/library/rust:1.100.0-trixie@sha256:223cc32ddca8f3ee90c436dbc94b6b5f052ea7f9653c5201e9612f08ad7d21b8
+    steps:
+      - name: Checkout
+        run: |
+          git init -q .
+          auth=$(printf 'ci:%s' "${{ github.token }}" | base64 -w0)
+          git -c http.extraHeader="Authorization: Basic $auth" fetch -q --depth 1 "${{ github.server_url }}/${{ github.repository }}.git" "${{ github.sha }}"
+          git checkout -q FETCH_HEAD
+      - name: Toolchain
+        run: |
+          rustup component add rustfmt clippy
+          cargo --version
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Lints
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked

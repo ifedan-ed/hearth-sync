@@ -1,0 +1,11 @@
+[package]
+name = "hearth-sync-core"
+description = "The sync engine's core: three trees, a pure planner, an executor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
