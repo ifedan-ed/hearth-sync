@@ -224,7 +224,9 @@ impl PathTree {
 
     /// Whether any file here holds `hash`.
     pub fn holds(&self, hash: &str) -> bool {
-        self.entries.values().any(|k| k.hash().is_some_and(|h| h == hash))
+        self.entries
+            .values()
+            .any(|k| k.hash().is_some_and(|h| h == hash))
     }
 
     /// The same tree with every name in NFC: how a device's tree is
@@ -245,17 +247,15 @@ impl PathTree {
     pub fn to_ids(&self, first_id: NodeId) -> IdTree {
         let mut tree = IdTree::new();
         let mut ids: BTreeMap<&str, NodeId> = BTreeMap::new();
-        let mut next = first_id;
         // BTreeMap order puts "a" before "a/b", so a parent is numbered
         // before its children.
-        for (path, kind) in &self.entries {
+        for (next, (path, kind)) in (first_id..).zip(self.entries.iter()) {
             let (parent, name) = match path.rsplit_once('/') {
                 Some((p, n)) => (ids.get(p).copied().unwrap_or(ROOT), n),
                 None => (ROOT, path.as_str()),
             };
             tree.insert(next, parent, name, kind.clone());
             ids.insert(path, next);
-            next += 1;
         }
         tree
     }
@@ -263,7 +263,10 @@ impl PathTree {
 
 /// `path` with each name in NFC.
 pub fn nfc_path(path: &str) -> String {
-    path.split('/').map(crate::name::nfc).collect::<Vec<_>>().join("/")
+    path.split('/')
+        .map(crate::name::nfc)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// The folder part of a path ("" at the top).
@@ -289,7 +292,9 @@ pub fn join(parent: &str, name: &str) -> String {
 pub fn is_within(path: &str, ancestor: &str) -> bool {
     ancestor.is_empty()
         || path == ancestor
-        || (path.len() > ancestor.len() && path.starts_with(ancestor) && path.as_bytes()[ancestor.len()] == b'/')
+        || (path.len() > ancestor.len()
+            && path.starts_with(ancestor)
+            && path.as_bytes()[ancestor.len()] == b'/')
 }
 
 #[cfg(test)]

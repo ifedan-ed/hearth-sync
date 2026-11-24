@@ -28,7 +28,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::apply::{Namespace, apply_act, lookup};
-use crate::check::{Guarantee, Violation, act_content, find_by_nfc, mount_of};
+use crate::check::{
+    Guarantee, Violation, act_content, find_on_side, mount_of, side_key, side_tree,
+};
 use crate::reconcile::{DeviceContext, MountRule, Settled, perms, reconcile};
 use crate::scenario::{Act, AdminOp, FaultOp, Side};
 use crate::trace::{Event, RootState, Snapshot, Trace};
@@ -41,20 +43,41 @@ pub fn check_outcomes(trace: &Trace) -> Vec<Violation> {
     out
 }
 
-/// The live contents at the start: everything on Hearth or on a disk.
-fn initial_live(s: &Snapshot) -> BTreeSet<Hash> {
-    let mut live: BTreeSet<Hash> = s.server.tree.hash_counts().into_keys().collect();
+/// Live files by content: how many files people made with each content
+/// that no person has since replaced or deleted. A count, not a set: a
+/// copy is a second live file with the same content, and editing one of
+/// the two retires only that one.
+type Live = BTreeMap<Hash, usize>;
+
+/// Retires one live file with content `h`.
+fn retire(live: &mut Live, h: &Hash) {
+    if let Some(n) = live.get_mut(h) {
+        *n = n.saturating_sub(1);
+        if *n == 0 {
+            live.remove(h);
+        }
+    }
+}
+
+/// The live files at the start: everything on Hearth or on a disk, each
+/// content counted as often as the most any one side holds it (the same
+/// file seen on Hearth and on a device is one file).
+fn initial_live(s: &Snapshot) -> Live {
+    let mut live = s.server.tree.hash_counts();
     for d in s.devices.values() {
-        live.extend(d.tree.hash_counts().into_keys());
+        for (h, n) in d.tree.hash_counts() {
+            let e = live.entry(h).or_insert(0);
+            *e = (*e).max(n);
+        }
     }
     live
 }
 
 /// Whether a person's act on `side` at `path` reaches Hearth at all. An
 /// act Hearth will refuse (a read-only mount, a path the scenario made
-/// Hearth refuse) does not replace anything there: the old version stays
-/// on Hearth by the rules (3.5 Permissions; I10), so it is not
-/// superseded.
+/// Hearth refuse) does not replace anything there: the old version may
+/// stay on Hearth by the rules (3.5 Permissions; I10), so its presence
+/// there is not a resurrection.
 fn reaches_hearth(side: &Side, path: &str, before: &Snapshot, refused: &BTreeSet<String>) -> bool {
     if matches!(side, Side::Web) {
         return true;
@@ -67,25 +90,35 @@ fn reaches_hearth(side: &Side, path: &str, before: &Snapshot, refused: &BTreeSet
 }
 
 /// The contents a person's act replaces or deletes: what that side held
-/// at the act's target just before (what the person saw).
-fn superseded(act: &Act, side: &Side, before: &Snapshot) -> Vec<Hash> {
-    let tree = match side {
-        Side::Web => Some(&before.server.tree),
-        Side::Device(d) => before.device(d).map(|d| &d.tree),
+/// at the act's target just before (what the person saw), the target
+/// found the way that side compares names.
+fn superseded(
+    devices: &[crate::scenario::DeviceSpec],
+    act: &Act,
+    side: &Side,
+    before: &Snapshot,
+) -> Vec<(Hash, String)> {
+    let Some((tree, volume)) = side_tree(devices, side, before) else {
+        return Vec::new();
     };
-    let Some(tree) = tree else { return Vec::new() };
-    let under = |path: &str| -> Vec<Hash> {
-        let p = nfc_path(path);
+    let under = |path: &str| -> Vec<(Hash, String)> {
+        let p = side_key(volume, path);
         tree.entries
             .iter()
-            .filter(|(q, _)| is_within(&nfc_path(q), &p))
-            .filter_map(|(_, k)| k.hash().cloned())
+            .filter(|(q, _)| is_within(&side_key(volume, q), &p))
+            .filter_map(|(q, k)| k.hash().map(|h| (h.clone(), nfc_path(q))))
             .collect()
     };
     match act {
-        Act::Edit { path, .. } => find_by_nfc(tree, path).and_then(Kind::hash).cloned().into_iter().collect(),
+        Act::Edit { path, .. } => find_on_side(tree, volume, path)
+            .and_then(Kind::hash)
+            .map(|h| (h.clone(), nfc_path(path)))
+            .into_iter()
+            .collect(),
         Act::Delete { path } | Act::Retype { path, .. } => under(path),
-        Act::Create { .. } | Act::Mkdir { .. } | Act::Rename { .. } | Act::Copy { .. } => Vec::new(),
+        Act::Create { .. } | Act::Mkdir { .. } | Act::Rename { .. } | Act::Copy { .. } => {
+            Vec::new()
+        }
     }
 }
 
@@ -108,49 +141,118 @@ pub fn check_versions(trace: &Trace) -> Vec<Violation> {
     let mut out = Vec::new();
     let mut live = initial_live(&trace.start);
     let mut refused: BTreeSet<String> = BTreeSet::new();
+    let mut denied: BTreeSet<(String, String)> = BTreeSet::new();
+    // What each departed share held that was live, for its return.
+    let mut away: BTreeMap<String, Live> = BTreeMap::new();
+    // (content, path) pairs retired since the last settled point.
+    let mut retired: BTreeSet<(Hash, String)> = BTreeSet::new();
+    // Contents no longer required anywhere that may still stay on Hearth:
+    // those a person replaced or deleted by an act Hearth refuses, and
+    // those on Hearth when a device lost its database (it cannot know of
+    // a delete it had not yet sent, so the files rightly come back, I12).
+    let mut may_stay: BTreeSet<Hash> = BTreeSet::new();
     for (i, step) in trace.steps.iter().enumerate() {
         let before = trace.before(i);
         match &step.event {
-            Event::Person { side, act, applied: true } => {
-                if reaches_hearth(side, act_path(act), before, &refused) {
-                    for h in superseded(act, side, before) {
-                        live.remove(&h);
+            Event::Person {
+                side,
+                act,
+                applied: true,
+            } => {
+                let denied_here = match side {
+                    Side::Device(d) => denied
+                        .iter()
+                        .any(|(dv, p)| dv == d && is_within(&nfc_path(act_path(act)), p)),
+                    Side::Web => false,
+                };
+                let reaches = !denied_here && reaches_hearth(side, act_path(act), before, &refused);
+                for (h, file) in superseded(&trace.scenario.devices, act, side, before) {
+                    // Two people replacing the same file (one of them
+                    // stale) retire it once.
+                    if retired.insert((h.clone(), file)) {
+                        retire(&mut live, &h);
+                    }
+                    if !reaches {
+                        may_stay.insert(h);
                     }
                 }
-                live.extend(act_content(act, side, before));
+                for h in act_content(&trace.scenario.devices, act, side, before) {
+                    *live.entry(h).or_insert(0) += 1;
+                }
             }
             Event::Admin(AdminOp::Refuse { path, .. }) => {
                 refused.insert(nfc_path(path));
             }
-            Event::Admin(AdminOp::ShareArrive { path }) => {
-                for (p, k) in &step.after.server.tree.entries {
-                    if is_within(p, &nfc_path(path))
-                        && let Some(h) = k.hash()
-                    {
-                        live.insert(h.clone());
+            Event::Fault {
+                device,
+                fault: FaultOp::Deny(path),
+            } => {
+                denied.insert((device.clone(), nfc_path(path)));
+            }
+            Event::Fault {
+                fault: FaultOp::RootReplaced,
+                ..
+            } => {
+                // Files only the old root held went with it, by an act
+                // outside the engine (an unplugged disk, a folder
+                // replaced): no longer required.
+                let mut anywhere: BTreeSet<Hash> =
+                    step.after.server.tree.hash_counts().into_keys().collect();
+                for d in step.after.devices.values() {
+                    anywhere.extend(d.tree.hash_counts().into_keys());
+                    anywhere.extend(d.holding.iter().cloned());
+                }
+                live.retain(|h, _| anywhere.contains(h));
+            }
+            Event::Admin(AdminOp::ShareArrive { path })
+                if !before.server.mounts.contains_key(path) =>
+            {
+                // Back as it was live when it left; a first arrival brings
+                // what the share holds.
+                match away.remove(path) {
+                    Some(kept) => {
+                        for (h, n) in kept {
+                            *live.entry(h).or_insert(0) += n;
+                        }
+                    }
+                    None => {
+                        for (p, k) in &step.after.server.tree.entries {
+                            if is_within(p, &nfc_path(path))
+                                && let Some(h) = k.hash()
+                            {
+                                *live.entry(h.clone()).or_insert(0) += 1;
+                            }
+                        }
                     }
                 }
             }
-            Event::Admin(AdminOp::ShareLeave { path }) => {
+            Event::Admin(AdminOp::ShareLeave { path })
+                if before.server.mounts.contains_key(path) =>
+            {
                 // Its files left the person's view; they are the owner's
                 // and still on the owner's Hearth (sync-api 4).
+                let mut kept: Live = Live::new();
                 for (p, k) in &before.server.tree.entries {
                     if is_within(p, &nfc_path(path))
                         && let Some(h) = k.hash()
+                        && live.contains_key(h)
                     {
-                        live.remove(h);
+                        *kept.entry(h.clone()).or_insert(0) += 1;
+                        retire(&mut live, h);
                     }
                 }
+                away.insert(path.clone(), kept);
             }
             Event::Admin(AdminOp::Restore) => {
                 // What was only on Hearth after the backup is gone by the
                 // operator's act; everything on a disk comes back by the
                 // resync by hashes (sync.md 3.11), and so does the backup.
-                let mut present: BTreeSet<Hash> = step.after.server.tree.hash_counts().into_keys().collect();
-                for d in step.after.devices.values() {
-                    present.extend(d.tree.hash_counts().into_keys());
-                }
-                live = present;
+                may_stay.extend(live.keys().cloned());
+                live = initial_live(&step.after);
+                // The resync after a restore has no history either: an
+                // edit made then is not known as one, so what was there
+                // may stay beside it (sync.md 3.11, as I12).
+                may_stay.extend(live.keys().cloned());
             }
             Event::Fault {
                 device,
@@ -159,21 +261,29 @@ pub fn check_versions(trace: &Trace) -> Vec<Violation> {
                 // Without history every differing local file is kept as a
                 // conflict copy (I12): everything on the disk is live.
                 if let Some(d) = before.device(device) {
-                    live.extend(d.tree.hash_counts().into_keys());
+                    for (h, n) in d.tree.hash_counts() {
+                        let e = live.entry(h).or_insert(0);
+                        *e = (*e).max(n);
+                    }
                 }
+                may_stay.extend(before.server.tree.hash_counts().into_keys());
             }
             Event::Settled => {
                 let after = &step.after;
-                let mut visible: BTreeSet<Hash> = after.server.tree.hash_counts().into_keys().collect();
+                let mut visible: BTreeSet<Hash> =
+                    after.server.tree.hash_counts().into_keys().collect();
                 for d in after.devices.values() {
                     for (p, k) in &d.tree.entries {
-                        let listed = d.listed.keys().any(|l| is_within(&nfc_path(p), &nfc_path(l)));
+                        let listed = d
+                            .listed
+                            .keys()
+                            .any(|l| is_within(&nfc_path(p), &nfc_path(l)));
                         if listed && let Some(h) = k.hash() {
                             visible.insert(h.clone());
                         }
                     }
                 }
-                for h in live.difference(&visible) {
+                for h in live.keys().filter(|h| !visible.contains(*h)) {
                     out.push(Violation {
                         guarantee: Guarantee::I1,
                         step: Some(i),
@@ -185,18 +295,41 @@ pub fn check_versions(trace: &Trace) -> Vec<Violation> {
                 }
                 for (p, k) in &after.server.tree.entries {
                     if let Some(h) = k.hash()
-                        && !live.contains(h)
+                        && !live.contains_key(h)
+                        && !may_stay.contains(h)
                     {
                         out.push(Violation {
                             guarantee: Guarantee::I7,
                             step: Some(i),
                             device: None,
                             path: Some(p.clone()),
-                            expected: format!("content {h} gone: a person replaced or deleted it after seeing it"),
+                            expected: format!(
+                                "content {h} gone: a person replaced or deleted it after seeing it"
+                            ),
                             found: "it is on Hearth again".into(),
                         });
                     }
                 }
+                // Two equal files people made separately may have become
+                // one (the creation row "equal hash: adopt as one node"):
+                // from here on each content is live as often as it is
+                // visible, so deleting that one file retires it.
+                let mut seen = after.server.tree.hash_counts();
+                for d in after.devices.values() {
+                    for (p, k) in &d.tree.entries {
+                        let listed = d
+                            .listed
+                            .keys()
+                            .any(|l| is_within(&nfc_path(p), &nfc_path(l)));
+                        if listed && let Some(h) = k.hash() {
+                            *seen.entry(h.clone()).or_insert(0) += 1;
+                        }
+                    }
+                }
+                for (h, n) in live.iter_mut() {
+                    *n = (*n).min(seen.get(h).copied().unwrap_or(0)).max(1);
+                }
+                retired.clear();
             }
             _ => {}
         }
@@ -231,7 +364,11 @@ impl Window {
         let mut clean = true;
         let mut local = BTreeMap::new();
         for (name, d) in &snapshot.devices {
-            if d.tree.nfc() != snapshot.server.tree || !d.listed.is_empty() || d.root != RootState::Present || d.paused.is_some() {
+            if d.tree.nfc() != snapshot.server.tree
+                || !d.listed.is_empty()
+                || d.root != RootState::Present
+                || d.paused.is_some()
+            {
                 clean = false;
             }
             local.insert(name.clone(), base.clone());
@@ -253,6 +390,14 @@ impl Window {
 /// The exact statement (see the module comment), at every `Settled`
 /// that ends a window where it applies.
 pub fn check_exact(trace: &Trace) -> Vec<Violation> {
+    exact_windows(trace).0
+}
+
+/// The exact statement's violations, and how many settled points it
+/// applied to (the rest are left to the general statement): for the
+/// coverage report.
+pub fn exact_windows(trace: &Trace) -> (Vec<Violation>, usize) {
+    let mut compared = 0usize;
     let mut out = Vec::new();
     let mut w = Window::from(&trace.start);
     for (i, step) in trace.steps.iter().enumerate() {
@@ -267,8 +412,9 @@ pub fn check_exact(trace: &Trace) -> Vec<Violation> {
                             w.clean = false;
                         }
                         w.web_acted = true;
-                        let mtime = written_mtime(act, &step.after.server.tree);
-                        let ok = apply_act(&mut w.remote, Namespace::Hearth, act, mtime, &mut w.next_id);
+                        let mtime = written_mtime(act, &step.after.server.tree, None);
+                        let ok =
+                            apply_act(&mut w.remote, Namespace::Hearth, act, mtime, &mut w.next_id);
                         if !ok {
                             w.clean = false;
                         }
@@ -278,15 +424,22 @@ pub fn check_exact(trace: &Trace) -> Vec<Violation> {
                             w.clean = false;
                         }
                         w.changed.insert(d.clone());
-                        let (Some(spec), Some(after)) = (trace.scenario.device(d), step.after.device(d)) else {
+                        let (Some(spec), Some(after)) =
+                            (trace.scenario.device(d), step.after.device(d))
+                        else {
                             w.clean = false;
                             continue;
                         };
-                        let mtime = written_mtime(act, &after.tree);
-                        let ok = w
-                            .local
-                            .get_mut(d)
-                            .is_some_and(|t| apply_act(t, Namespace::Device(spec.volume), act, mtime, &mut w.next_id));
+                        let mtime = written_mtime(act, &after.tree, Some(spec.volume));
+                        let ok = w.local.get_mut(d).is_some_and(|t| {
+                            apply_act(
+                                t,
+                                Namespace::Device(spec.volume),
+                                act,
+                                mtime,
+                                &mut w.next_id,
+                            )
+                        });
                         if !ok {
                             w.clean = false;
                         }
@@ -309,17 +462,25 @@ pub fn check_exact(trace: &Trace) -> Vec<Violation> {
                 | FaultOp::DiskFull(_)
                 | FaultOp::Skew(_)
                 | FaultOp::Corrupt(_) => {}
-                FaultOp::Deny(_) | FaultOp::RootVanish | FaultOp::RootBack | FaultOp::RootReplaced | FaultOp::DbDeleted => {
+                FaultOp::Deny(_)
+                | FaultOp::RootVanish
+                | FaultOp::RootBack
+                | FaultOp::RootReplaced
+                | FaultOp::DbDeleted => {
                     w.clean = false;
                 }
             },
             Event::Admin(a) => {
-                if !matches!(a, AdminOp::Restart | AdminOp::CursorExpire | AdminOp::EmptyTrash) {
+                if !matches!(
+                    a,
+                    AdminOp::Restart | AdminOp::CursorExpire | AdminOp::EmptyTrash
+                ) {
                     w.clean = false;
                 }
             }
             Event::Settled => {
                 if w.clean && w.changed.len() <= 1 {
+                    compared += 1;
                     out.extend(compare_exact(trace, &w, i));
                 }
                 w = Window::from(&step.after);
@@ -327,19 +488,19 @@ pub fn check_exact(trace: &Trace) -> Vec<Violation> {
             Event::Confirm { .. } | Event::Engine { .. } => {}
         }
     }
-    out
+    (out, compared)
 }
 
 /// The time written on the content an act made, read from the side's
 /// tree just after it (the model does not decide times; it only needs
 /// them to name conflict copies).
-fn written_mtime(act: &Act, tree: &PathTree) -> i64 {
+fn written_mtime(act: &Act, tree: &PathTree, volume: Option<crate::name::Volume>) -> i64 {
     let path = match act {
         Act::Create { path, .. } | Act::Edit { path, .. } | Act::Retype { path, .. } => path,
         Act::Copy { to, .. } => to,
         _ => return 0,
     };
-    match find_by_nfc(tree, path) {
+    match find_on_side(tree, volume, path) {
         Some(Kind::File { mtime, .. }) => *mtime,
         _ => 0,
     }
@@ -347,7 +508,12 @@ fn written_mtime(act: &Act, tree: &PathTree) -> i64 {
 
 /// The merge context of device `name` at a snapshot: its spec and the
 /// mounts with their rights, by node in `remote`.
-fn context(trace: &Trace, name: &str, snapshot: &Snapshot, remote: &IdTree) -> Option<DeviceContext> {
+fn context(
+    trace: &Trace,
+    name: &str,
+    snapshot: &Snapshot,
+    remote: &IdTree,
+) -> Option<DeviceContext> {
     let spec = trace.scenario.device(name)?;
     let mounts = snapshot
         .server
@@ -378,7 +544,8 @@ fn compare_exact(trace: &Trace, w: &Window, i: usize) -> Vec<Violation> {
     let changed = w.changed.iter().next();
     let (server, device_outcomes): (IdTree, BTreeMap<String, Settled>) = match changed {
         Some(d) => {
-            let (Some(ctx), Some(local)) = (context(trace, d, after, &w.remote), w.local.get(d)) else {
+            let (Some(ctx), Some(local)) = (context(trace, d, after, &w.remote), w.local.get(d))
+            else {
                 return out;
             };
             match reconcile(&w.base, local, &w.remote, &ctx, next_id) {
@@ -399,7 +566,9 @@ fn compare_exact(trace: &Trace, w: &Window, i: usize) -> Vec<Violation> {
         if devices.contains_key(name) {
             continue;
         }
-        let Some(ctx) = context(trace, name, after, &server) else { continue };
+        let Some(ctx) = context(trace, name, after, &server) else {
+            continue;
+        };
         match reconcile(&w.base, &w.base, &server, &ctx, next_id) {
             Ok(s) => {
                 devices.insert(name.clone(), s);
@@ -410,10 +579,20 @@ fn compare_exact(trace: &Trace, w: &Window, i: usize) -> Vec<Violation> {
     let expected_server = server.to_paths();
     out.extend(tree_diff(i, None, &expected_server, &after.server.tree));
     for (name, s) in &devices {
-        let Some(observed) = after.device(name) else { continue };
+        // A device that was online while the web changed things saw the
+        // steps in between; where its volume refuses or clashes a name,
+        // which of those steps it kept depends on timing, so its tree is
+        // left to the general checks.
+        let online_through = changed != Some(name);
+        if online_through && (!s.listed.is_empty() || !s.device_alternatives.is_empty()) {
+            continue;
+        }
+        let Some(observed) = after.device(name) else {
+            continue;
+        };
         let observed = observed.tree.nfc();
         let candidates = device_candidates(s);
-        if !candidates.iter().any(|c| *c == observed) {
+        if !candidates.contains(&observed) {
             out.extend(tree_diff(i, Some(name), &candidates[0], &observed));
         }
     }
@@ -438,7 +617,9 @@ fn device_candidates(s: &Settled) -> Vec<PathTree> {
     for group in &s.device_alternatives {
         let mut more = Vec::new();
         for t in &trees {
-            let Some(shown) = group.iter().find(|id| t.has(**id)) else { continue };
+            let Some(shown) = group.iter().find(|id| t.has(**id)) else {
+                continue;
+            };
             for other in group.iter().filter(|id| *id != shown) {
                 let mut alt = t.clone();
                 for gone in t.subtree(*shown) {
@@ -460,9 +641,18 @@ fn device_candidates(s: &Settled) -> Vec<PathTree> {
 
 /// The differences between an expected and an observed tree, as
 /// violations of I7 (the settled outcome), one per path.
-fn tree_diff(i: usize, device: Option<&String>, expected: &PathTree, observed: &PathTree) -> Vec<Violation> {
+fn tree_diff(
+    i: usize,
+    device: Option<&String>,
+    expected: &PathTree,
+    observed: &PathTree,
+) -> Vec<Violation> {
     let mut out = Vec::new();
-    let paths: BTreeSet<&String> = expected.entries.keys().chain(observed.entries.keys()).collect();
+    let paths: BTreeSet<&String> = expected
+        .entries
+        .keys()
+        .chain(observed.entries.keys())
+        .collect();
     for p in paths {
         let (e, o) = (expected.get(p), observed.get(p));
         let same = match (e, o) {

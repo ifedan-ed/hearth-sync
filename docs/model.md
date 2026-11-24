@@ -64,7 +64,10 @@ stages. Each is a paragraph of the plan.
    hashes are one; two different files: the one Hearth already holds
    keeps the name, the other becomes a conflict copy.
 8. The device's side of names (3.8): a remote name the volume cannot
-   hold, or the engine's own names at the root, stay on Hearth, listed;
+   hold, or the engine's own names (`.hearthsync` at the root,
+   `*.hearthtmp` anywhere), stay on Hearth, listed; an item the device
+   already holds that Hearth renamed to such a name stays at its old
+   local name, and a folder kept so keeps everything in it as it is;
    two remote names one volume holds as one: the one already on the
    device stays, the other is listed; if neither is there yet, either
    may arrive first.
@@ -96,11 +99,20 @@ is accepted.
 Everywhere else the order in which devices reach Hearth is free, so the
 outcome is a set. The model describes it by versions:
 
-- A content a person made is live until a person who saw it replaced or
-  deleted it (a device's act that Hearth will refuse, by rights or by a
-  refusal, supersedes nothing). A restore makes live exactly what is on
-  any disk or in the restored Hearth; a lost database makes everything
-  on that disk live (I12: differing files become conflict copies).
+- Every file a person made is live until a person who saw it replaced
+  or deleted it. Liveness is counted per content: a copy is a second
+  live file with the same content, and editing one of the two retires
+  only that one. At each settled point the counts are brought down to
+  what is visible, since two equal files made apart may have become one
+  ("equal hash: adopt as one node"). A restore makes live exactly what
+  is on any disk or in the restored Hearth; a lost database makes
+  everything on that disk live (I12: differing files become conflict
+  copies).
+- A content a person replaced or deleted may still stay on Hearth when
+  the act was one Hearth refuses (read-only mount, a refused path), and
+  when a device lost its database while Hearth held it: without its
+  history the device cannot know of a delete it had not yet sent, so
+  the file comes back.
 - At every settled point, every live content is on Hearth or listed on
   a device (I1).
 - Hearth holds no content that is not live: a person's delete or edit
@@ -122,15 +134,15 @@ step, device, path, what was expected and what was found.
 | --- | --- | --- |
 | I1 | At every engine step: content leaving a device is on that device under another name, on Hearth (files, versions, trash) or in its holding area; no engine step removes a content's last copy anywhere (except a delete on a mount without trash or a replace without versions, which the contract makes final). At every settled point: every live version is visible. | `check_i1`, `outcome::check_versions` |
 | I2 | At every engine step: a file replaced or removed whose content is not the synced tree's keeps that content visible on the device or on Hearth (a conflict copy; the holding area is not enough). | `check_i2` |
-| I3 | Every write Hearth carried out had its operation's condition (sync-api 8.1), a file condition named the version Hearth held, and that version was in the device's view of Hearth. | `check_i3` |
+| I3 | Every write Hearth carried out had its operation's condition (sync-api 8.1), a file condition named the version Hearth held, and that version was in the device's view of Hearth or is content the device itself sent (a hash condition on its own bytes). | `check_i3` |
 | I4, I5 | At every step, every file at a real name on any disk and on Hearth holds a content some person saved: on Hearth, otherwise I5; on a device, I5 after an injected corruption, else I4. | `check_i4_i5` |
 | I6 | While a root is missing or replaced, its engine deletes and moves nothing on Hearth. After a restore, no engine removes from its disk a content Hearth lacks. | `check_i6` |
 | I7 | After `Settled`, only `/sync/wait`, and no disk change; the settle took at most the bound of engine steps. The exact outcome where fixed; no superseded content back on Hearth. | `check_i7_quiescence`, `outcome` |
 | I8 | At `Settled`: Hearth's names in NFC; every device equal to Hearth in NFC except listed items; the synced tree agreeing. | `check_i8` |
 | I9 | At `Settled`: no content more often than made; engine-made conflict names well formed with a device of the run. | `check_i9` |
-| I10 | At every step: every listing's reason is one the documents give and true of that item; an engine never changes a listed item. | `check_i10` |
+| I10 | At every settled point every listing's reason is one the documents give and true of that item, and every name on Hearth is one a person gave or a conflict copy name (the engine invents no names); at every step an engine never changes an item that stays listed through its run. | `check_i10` |
 | I11 | No upload repeated after one was answered and Hearth holds it; no download repeated after one is in place. | `check_i11` |
-| I12 | After a lost database, until settled: no transfer of a content both sides held at one path. | `check_i12` |
+| I12 | After a lost database, until settled: no transfer of a content both sides hold at one path at that moment. | `check_i12` |
 | I13 | Two runs of one seed have byte-identical logs. | `check_i13` |
 | 3.11 | No engine run deletes more than 50 files and a quarter of a mount without the person's confirmation. | `check_mass_change` |
 

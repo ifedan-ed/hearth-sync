@@ -90,6 +90,9 @@ The codes a device may list, and when each is true (I10 checks it):
 | `refused:<code>` | Hearth refused writes there (`locked`, `quota`, `virus`, `forbidden`). |
 | `denied` | The device's file system denied access. |
 | `no_longer_shared` | Kept local after a share left (sync.md 4.2). |
+| `other_name` | One item held under two names because one side cannot take the other's name (Hearth renamed it to a name this device cannot hold, or the person renamed it to a name Hearth refuses): the refused name is listed with its reason, the other with this code. True while exactly one side holds the path. |
+| `inside_listed` | Inside a listed folder (the folder's listing covers it; a runner need not list it separately). |
+| `transient:<kind>` | A problem that passes on its own (a hash mismatch being retried); accepted at any step, excuses nothing at `Settled`. |
 
 ## Scenario ops the runner must honour
 

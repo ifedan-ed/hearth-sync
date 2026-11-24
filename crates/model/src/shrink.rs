@@ -14,7 +14,11 @@ use crate::scenario::{Act, AdminOp, FaultOp, Op, Scenario, Side};
 /// Reduces `scenario` while `fails` stays true; returns the smallest
 /// found. `fails` must be true for the input (else it is returned as
 /// is). The number of tries is bounded by `budget`.
-pub fn shrink(scenario: &Scenario, mut fails: impl FnMut(&Scenario) -> bool, budget: usize) -> Scenario {
+pub fn shrink(
+    scenario: &Scenario,
+    mut fails: impl FnMut(&Scenario) -> bool,
+    budget: usize,
+) -> Scenario {
     let mut best = scenario.clone();
     if !fails(&best) {
         return best;
@@ -70,8 +74,12 @@ pub fn shrink(scenario: &Scenario, mut fails: impl FnMut(&Scenario) -> bool, bud
         if !best.mounts.is_empty() {
             let mut c = best.clone();
             c.mounts.clear();
-            c.ops
-                .retain(|op| !matches!(op, Op::Admin(AdminOp::ShareArrive { .. } | AdminOp::ShareLeave { .. })));
+            c.ops.retain(|op| {
+                !matches!(
+                    op,
+                    Op::Admin(AdminOp::ShareArrive { .. } | AdminOp::ShareLeave { .. })
+                )
+            });
             progress |= try_one(c, &mut best, &mut tries);
         }
         // 4. Plain names: each distinct name becomes n1, n2, ... in every
@@ -111,7 +119,8 @@ pub fn shrink(scenario: &Scenario, mut fails: impl FnMut(&Scenario) -> bool, bud
 fn mentions_device(op: &Op, device: &str) -> bool {
     match op {
         Op::Person {
-            side: Side::Device(d), ..
+            side: Side::Device(d),
+            ..
         } => d == device,
         Op::Fault { device: d, .. } | Op::Confirm { device: d } => d == device,
         _ => false,
@@ -120,7 +129,11 @@ fn mentions_device(op: &Op, device: &str) -> bool {
 
 fn act_paths(act: &Act) -> Vec<&String> {
     match act {
-        Act::Create { path, .. } | Act::Edit { path, .. } | Act::Mkdir { path } | Act::Delete { path } | Act::Retype { path, .. } => {
+        Act::Create { path, .. }
+        | Act::Edit { path, .. }
+        | Act::Mkdir { path }
+        | Act::Delete { path }
+        | Act::Retype { path, .. } => {
             vec![path]
         }
         Act::Rename { from, to } | Act::Copy { from, to } => vec![from, to],
@@ -148,22 +161,29 @@ fn names_in(s: &Scenario) -> Vec<String> {
 /// The scenario with the name `from` replaced by `to` in every path.
 fn rename_everywhere(s: &Scenario, from: &str, to: &str) -> Scenario {
     let fix = |p: &mut String| {
-        *p = p.split('/').map(|n| if n == from { to } else { n }).collect::<Vec<_>>().join("/");
+        *p = p
+            .split('/')
+            .map(|n| if n == from { to } else { n })
+            .collect::<Vec<_>>()
+            .join("/");
     };
     let mut c = s.clone();
     for op in &mut c.ops {
         match op {
             Op::Person { act, .. } => match act {
-                Act::Create { path, .. } | Act::Edit { path, .. } | Act::Mkdir { path } | Act::Delete { path } | Act::Retype { path, .. } => {
-                    fix(path)
-                }
+                Act::Create { path, .. }
+                | Act::Edit { path, .. }
+                | Act::Mkdir { path }
+                | Act::Delete { path }
+                | Act::Retype { path, .. } => fix(path),
                 Act::Rename { from, to } | Act::Copy { from, to } => {
                     fix(from);
                     fix(to);
                 }
             },
             Op::Fault {
-                fault: FaultOp::Deny(p), ..
+                fault: FaultOp::Deny(p),
+                ..
             } => fix(p),
             Op::Admin(AdminOp::Refuse { path, .. }) => fix(path),
             _ => {}

@@ -22,8 +22,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::name::{
-    DeviceRefusal, HEARTH_NAME_BYTES_MAX, HearthRefusal, Stamp, Volume, conflict_name, device_refuses,
-    hearth_refuses_local, is_engine_name, name_key, nfc,
+    DeviceRefusal, HEARTH_NAME_BYTES_MAX, HearthRefusal, Stamp, Volume, conflict_name,
+    device_refuses, hearth_refuses_local, is_engine_name, name_key, nfc,
 };
 use crate::tree::{IdTree, Kind, Node, NodeId, ROOT};
 
@@ -104,7 +104,6 @@ impl Change {
         }
     }
 
-
     fn moves(self) -> bool {
         matches!(self, Change::Move | Change::Both)
     }
@@ -184,35 +183,35 @@ fn file_cell(local: Change, remote: Change) -> Option<Cell> {
     use Pick::{Base as B, Local as L, Remote as R};
     Some(match (local, remote) {
         // row none
-        (None, None) => cell(true, B, B),         // nothing
-        (None, Edit) => cell(true, B, R),         // download
-        (None, Move) => cell(true, R, B),         // move locally
-        (None, Both) => cell(true, R, R),         // move, then download
-        (None, Delete) => cell(false, B, B),      // remove locally (H)
+        (None, None) => cell(true, B, B),    // nothing
+        (None, Edit) => cell(true, B, R),    // download
+        (None, Move) => cell(true, R, B),    // move locally
+        (None, Both) => cell(true, R, R),    // move, then download
+        (None, Delete) => cell(false, B, B), // remove locally (H)
         // row edit
-        (Edit, None) => cell(true, B, L),         // upload
-        (Edit, Edit) => cell_a(B),                // A
-        (Edit, Move) => cell(true, R, L),         // upload to the id; move locally
-        (Edit, Both) => cell_a(R),                // A, at the remote's new place
-        (Edit, Delete) => cell(true, L, L),       // B: the edit wins, at its local path
+        (Edit, None) => cell(true, B, L),   // upload
+        (Edit, Edit) => cell_a(B),          // A
+        (Edit, Move) => cell(true, R, L),   // upload to the id; move locally
+        (Edit, Both) => cell_a(R),          // A, at the remote's new place
+        (Edit, Delete) => cell(true, L, L), // B: the edit wins, at its local path
         // row move
-        (Move, None) => cell(true, L, B),         // move on Hearth
-        (Move, Edit) => cell(true, L, R),         // move on Hearth; download
-        (Move, Move) => cell(true, R, B),         // C: Hearth's place wins
-        (Move, Both) => cell(true, R, R),         // C, then download
-        (Move, Delete) => cell(false, L, B),      // D: the delete is applied
+        (Move, None) => cell(true, L, B),    // move on Hearth
+        (Move, Edit) => cell(true, L, R),    // move on Hearth; download
+        (Move, Move) => cell(true, R, B),    // C: Hearth's place wins
+        (Move, Both) => cell(true, R, R),    // C, then download
+        (Move, Delete) => cell(false, L, B), // D: the delete is applied
         // row both
-        (Both, None) => cell(true, L, L),         // move and upload
-        (Both, Edit) => cell_a(L),                // A, at the local's new place
-        (Both, Move) => cell(true, R, L),         // C, then upload
-        (Both, Both) => cell_a(R),                // C for the place, A for content
-        (Both, Delete) => cell(true, L, L),       // B
+        (Both, None) => cell(true, L, L),   // move and upload
+        (Both, Edit) => cell_a(L),          // A, at the local's new place
+        (Both, Move) => cell(true, R, L),   // C, then upload
+        (Both, Both) => cell_a(R),          // C for the place, A for content
+        (Both, Delete) => cell(true, L, L), // B
         // row delete
-        (Delete, None) => cell(false, B, B),      // delete on Hearth
-        (Delete, Edit) => cell(true, R, R),       // E: the edit wins
-        (Delete, Move) => cell(false, R, B),      // delete on Hearth (D mirrored)
-        (Delete, Both) => cell(true, R, R),       // E
-        (Delete, Delete) => cell(false, B, B),    // nothing (drop node)
+        (Delete, None) => cell(false, B, B), // delete on Hearth
+        (Delete, Edit) => cell(true, R, R),  // E: the edit wins
+        (Delete, Move) => cell(false, R, B), // delete on Hearth (D mirrored)
+        (Delete, Both) => cell(true, R, R),  // E
+        (Delete, Delete) => cell(false, B, B), // nothing (drop node)
         // creations, no base: each side's own new node goes where that
         // side put it. The same id new on both sides happens only when
         // the base lost a node both sides hold (a crash before the base
@@ -234,14 +233,14 @@ fn folder_cell(local: Change, remote: Change) -> Option<Cell> {
     use Change::*;
     use Pick::{Base as B, Local as L, Remote as R};
     Some(match (local, remote) {
-        (None, None) => cell(true, B, B),     // nothing
-        (None, Move) => cell(true, R, B),     // move locally
-        (None, Delete) => cell(false, B, B),  // remove locally (F)
-        (Move, None) => cell(true, L, B),     // move on Hearth
-        (Move, Move) => cell(true, R, B),     // C
-        (Move, Delete) => cell(false, L, B),  // G: F at the folder's new place
-        (Delete, None) => cell(false, B, B),  // delete on Hearth (F)
-        (Delete, Move) => cell(false, R, B),  // G
+        (None, None) => cell(true, B, B),      // nothing
+        (None, Move) => cell(true, R, B),      // move locally
+        (None, Delete) => cell(false, B, B),   // remove locally (F)
+        (Move, None) => cell(true, L, B),      // move on Hearth
+        (Move, Move) => cell(true, R, B),      // C
+        (Move, Delete) => cell(false, L, B),   // G: F at the folder's new place
+        (Delete, None) => cell(false, B, B),   // delete on Hearth (F)
+        (Delete, Move) => cell(false, R, B),   // G
         (Delete, Delete) => cell(false, B, B), // nothing
         (Create, Absent) => cell(true, L, B),
         (Absent, Create) => cell(true, R, B),
@@ -276,6 +275,10 @@ pub enum Listing {
     /// A local move out of or within a read-only folder: "undone locally,
     /// listed".
     ReadOnlyMove,
+    /// Inside a folder the device keeps at an old name because it cannot
+    /// hold Hearth's new one: left as it is with its folder (3.8; the
+    /// folder's own listing covers it).
+    InsideListed,
 }
 
 impl Listing {
@@ -289,6 +292,7 @@ impl Listing {
             Listing::ReadOnlyEdit => "read_only_edit".into(),
             Listing::ReadOnlyCreate => "read_only_create".into(),
             Listing::ReadOnlyMove => "read_only_move".into(),
+            Listing::InsideListed => "inside_listed".into(),
         }
     }
 }
@@ -464,7 +468,11 @@ pub fn reconcile(
         let (b, l, r) = (base.get(*id), local.get(*id), remote.get(*id));
         let lc = classify(b, l, true);
         let rc = classify(b, r, false);
-        let any = b.or(r).or(l).map(|n| n.kind.clone()).unwrap_or(Kind::Folder);
+        let any = b
+            .or(r)
+            .or(l)
+            .map(|n| n.kind.clone())
+            .unwrap_or(Kind::Folder);
         let is_folder = any.is_folder();
         let table = if is_folder { "folder" } else { "file" };
         let found = if is_folder {
@@ -477,7 +485,8 @@ pub fn reconcile(
             // kept as an error rather than a panic.
             return Err(ModelError::BadParent(*id));
         };
-        out.cells.insert(format!("{table}:{}/{}", lc.code(), rc.code()));
+        out.cells
+            .insert(format!("{table}:{}/{}", lc.code(), rc.code()));
         let pick = |p: Pick| -> Option<&Node> {
             match p {
                 Pick::Base => b.or(r).or(l),
@@ -490,7 +499,9 @@ pub fn reconcile(
             name: String::new(),
             kind: Kind::Folder,
         });
-        let content = pick(c.content).map(|n| n.kind.clone()).unwrap_or(Kind::Folder);
+        let content = pick(c.content)
+            .map(|n| n.kind.clone())
+            .unwrap_or(Kind::Folder);
         let mut both_edited = c.both_edited;
         if both_edited
             && let (Some(ln), Some(rn)) = (l, r)
@@ -613,7 +624,12 @@ pub fn reconcile(
     }
     // Whatever is inside a device-only folder is device-only too: there
     // is nowhere on Hearth to put it.
-    propagate_flag(&mut decided, |d| d.device_only, |d| d.device_only = true, |d| &d.device);
+    propagate_flag(
+        &mut decided,
+        |d| d.device_only,
+        |d| d.device_only = true,
+        |d| &d.device,
+    );
 
     // Stages 5 and 6, repeated until nothing changes: undo local moves in
     // cycles (Hearth's wins), then bring back every folder that holds a
@@ -644,7 +660,11 @@ pub fn reconcile(
             }
             changed = true;
         }
-        let alive: Vec<NodeId> = decided.iter().filter(|(_, d)| d.alive).map(|(id, _)| *id).collect();
+        let alive: Vec<NodeId> = decided
+            .iter()
+            .filter(|(_, d)| d.alive)
+            .map(|(id, _)| *id)
+            .collect();
         for id in alive {
             for parent in [
                 decided.get(&id).map(|d| d.server.parent),
@@ -684,7 +704,11 @@ pub fn reconcile(
     for (id, reason) in a_conflicts
         .iter()
         .map(|id| (*id, CopyReason::BothEdited))
-        .chain(read_only_copies.iter().map(|id| (*id, CopyReason::ReadOnly)))
+        .chain(
+            read_only_copies
+                .iter()
+                .map(|id| (*id, CopyReason::ReadOnly)),
+        )
     {
         let (Some(d), Some(l)) = (decided.get(&id), local.get(id)) else {
             continue;
@@ -724,7 +748,9 @@ pub fn reconcile(
     }
     // Name them in id order, each against the names already taken.
     for copy in out.copies.iter() {
-        let Some(c) = copies.get(&copy.id).cloned() else { continue };
+        let Some(c) = copies.get(&copy.id).cloned() else {
+            continue;
+        };
         let stamp = Stamp::local(mtime(&c.server.kind), ctx.utc_offset_secs);
         let mut all = decided.clone();
         all.extend(copies.clone());
@@ -819,7 +845,11 @@ fn propagate_flag(
     side: impl Fn(&Decided) -> &Node,
 ) {
     loop {
-        let flagged: BTreeSet<NodeId> = decided.iter().filter(|(_, d)| has(d)).map(|(id, _)| *id).collect();
+        let flagged: BTreeSet<NodeId> = decided
+            .iter()
+            .filter(|(_, d)| has(d))
+            .map(|(id, _)| *id)
+            .collect();
         let mut changed = false;
         for d in decided.values_mut() {
             if !has(d) && flagged.contains(&side(d).parent) {
@@ -911,7 +941,10 @@ fn resolve_server_clashes(
         let mut groups: BTreeMap<(NodeId, String), Vec<NodeId>> = BTreeMap::new();
         for (id, d) in decided.iter() {
             if d.alive && !d.device_only {
-                groups.entry((d.server.parent, d.server.name.clone())).or_default().push(*id);
+                groups
+                    .entry((d.server.parent, d.server.name.clone()))
+                    .or_default()
+                    .push(*id);
             }
         }
         let Some(((parent, wanted), group)) = groups.into_iter().find(|(_, g)| g.len() > 1) else {
@@ -922,11 +955,23 @@ fn resolve_server_clashes(
                 .get(*id)
                 .is_some_and(|r| r.parent == parent && r.name == wanted)
         };
-        let folders: Vec<NodeId> = group.iter().copied().filter(|id| decided[id].is_folder).collect();
-        let files: Vec<NodeId> = group.iter().copied().filter(|id| !decided[id].is_folder).collect();
+        let folders: Vec<NodeId> = group
+            .iter()
+            .copied()
+            .filter(|id| decided[id].is_folder)
+            .collect();
+        let files: Vec<NodeId> = group
+            .iter()
+            .copied()
+            .filter(|id| !decided[id].is_folder)
+            .collect();
         if folders.len() > 1 {
             // folder and folder: one folder. Hearth's keeps its id.
-            let keeper = folders.iter().copied().find(on_hearth).unwrap_or(folders[0]);
+            let keeper = folders
+                .iter()
+                .copied()
+                .find(on_hearth)
+                .unwrap_or(folders[0]);
             for gone in folders.iter().copied().filter(|f| *f != keeper) {
                 for d in decided.values_mut() {
                     if d.server.parent == gone {
@@ -982,7 +1027,13 @@ fn resolve_server_clashes(
 
 /// Renames node `id` (which wanted `wanted`) to a conflict copy name on
 /// both sides and records the copy.
-fn rename_to_copy(decided: &mut BTreeMap<NodeId, Decided>, id: NodeId, wanted: &str, ctx: &DeviceContext, out: &mut Settled) {
+fn rename_to_copy(
+    decided: &mut BTreeMap<NodeId, Decided>,
+    id: NodeId,
+    wanted: &str,
+    ctx: &DeviceContext,
+    out: &mut Settled,
+) {
     let Some(d) = decided.get(&id) else { return };
     let stamp = Stamp::local(mtime(&d.server.kind), ctx.utc_offset_secs);
     let parent = d.server.parent;
@@ -1003,12 +1054,17 @@ fn rename_to_copy(decided: &mut BTreeMap<NodeId, Decided>, id: NodeId, wanted: &
 /// device cannot hold, or that it would hold under the same name as
 /// another item, stay on Hearth and are listed; so does an entry with the
 /// engine's own name at the root.
-fn resolve_device_names(decided: &mut BTreeMap<NodeId, Decided>, local: &IdTree, ctx: &DeviceContext, out: &mut Settled) {
+fn resolve_device_names(
+    decided: &mut BTreeMap<NodeId, Decided>,
+    local: &IdTree,
+    ctx: &DeviceContext,
+    out: &mut Settled,
+) {
     for (id, d) in decided.iter_mut() {
         if !d.alive || d.device_only {
             continue;
         }
-        let why = if d.device.parent == ROOT && is_engine_name(&d.device.name) {
+        let why = if is_engine_name(&d.device.name, d.device.parent == ROOT) {
             Listing::EngineName
         } else if let Some(why) = device_refuses(ctx.volume, &d.device.name) {
             Listing::DeviceRefused(why)
@@ -1029,7 +1085,43 @@ fn resolve_device_names(decided: &mut BTreeMap<NodeId, Decided>, local: &IdTree,
         }
         out.listed.insert(*id, why);
     }
-    propagate_flag(decided, |d| d.server_only, |d| d.server_only = true, |d| &d.server);
+    // A folder kept at its old local name keeps what is in it as it is
+    // locally: the device does not sync into a folder it stopped syncing.
+    let kept: Vec<NodeId> = decided
+        .iter()
+        .filter(|(id, d)| {
+            d.is_folder && out.listed.contains_key(*id) && local.has(**id) && !d.server_only
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    for folder in kept {
+        for id in local.subtree(folder).into_iter().filter(|id| *id != folder) {
+            if let (Some(d), Some(l)) = (decided.get_mut(&id), local.get(id)) {
+                d.alive = true;
+                d.device = Node {
+                    parent: l.parent,
+                    name: nfc(&l.name),
+                    kind: l.kind.clone(),
+                };
+                out.listed.entry(id).or_insert(Listing::InsideListed);
+            }
+        }
+        for (id, d) in decided.iter_mut() {
+            if !local.has(*id)
+                && d.server.parent != ROOT
+                && local.subtree(folder).contains(&d.server.parent)
+            {
+                d.server_only = true;
+                out.listed.entry(*id).or_insert(Listing::InsideListed);
+            }
+        }
+    }
+    propagate_flag(
+        decided,
+        |d| d.server_only,
+        |d| d.server_only = true,
+        |d| &d.server,
+    );
     // Name clashes by the volume's key. The item already on the device
     // keeps its name ("the first to arrive is synced"); among items none
     // of which is here yet, any one may arrive first.
@@ -1049,7 +1141,8 @@ fn resolve_device_names(decided: &mut BTreeMap<NodeId, Decided>, local: &IdTree,
         let here: Vec<NodeId> = group.iter().copied().filter(|id| local.has(*id)).collect();
         let keeper = here.first().copied().unwrap_or(group[0]);
         if here.is_empty() {
-            out.device_alternatives.push(group.iter().copied().collect());
+            out.device_alternatives
+                .push(group.iter().copied().collect());
         }
         for id in group.into_iter().filter(|id| *id != keeper) {
             if let Some(d) = decided.get_mut(&id) {
@@ -1057,6 +1150,11 @@ fn resolve_device_names(decided: &mut BTreeMap<NodeId, Decided>, local: &IdTree,
             }
             out.listed.insert(id, Listing::NameClash);
         }
-        propagate_flag(decided, |d| d.server_only, |d| d.server_only = true, |d| &d.server);
+        propagate_flag(
+            decided,
+            |d| d.server_only,
+            |d| d.server_only = true,
+            |d| &d.server,
+        );
     }
 }

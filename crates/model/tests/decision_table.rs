@@ -9,7 +9,9 @@
 use std::collections::BTreeSet;
 
 use hearth_sync_model::name::Volume;
-use hearth_sync_model::reconcile::{DeviceContext, Listing, MountRule, Settled, all_cells, perms, reconcile};
+use hearth_sync_model::reconcile::{
+    DeviceContext, Listing, MountRule, Settled, all_cells, perms, reconcile,
+};
 use hearth_sync_model::tree::{IdTree, Kind, NodeId, ROOT};
 
 const D: NodeId = 1;
@@ -81,7 +83,10 @@ fn files(t: &IdTree) -> Vec<(String, String)> {
 }
 
 fn want(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-    let mut v: Vec<(String, String)> = pairs.iter().map(|(p, h)| (p.to_string(), h.to_string())).collect();
+    let mut v: Vec<(String, String)> = pairs
+        .iter()
+        .map(|(p, h)| (p.to_string(), h.to_string()))
+        .collect();
     v.sort();
     v
 }
@@ -106,29 +111,99 @@ macro_rules! file_cell {
 file_cell!(file_none_none_nothing, None, None, [("d/x.txt", "c0")]);
 file_cell!(file_none_edit_download, None, Edit, [("d/x.txt", "c2")]);
 file_cell!(file_none_move_move_locally, None, Move, [("e/r.txt", "c0")]);
-file_cell!(file_none_both_move_then_download, None, Both, [("e/r.txt", "c2")]);
+file_cell!(
+    file_none_both_move_then_download,
+    None,
+    Both,
+    [("e/r.txt", "c2")]
+);
 file_cell!(file_none_delete_remove_locally, None, Delete, []);
 // Row edit.
 file_cell!(file_edit_none_upload, Edit, None, [("d/x.txt", "c1")]);
-file_cell!(file_edit_edit_a_conflict_copy, Edit, Edit, [("d/x.txt", "c2"), (&format!("d/x {COPY}.txt"), "c1")]);
-file_cell!(file_edit_move_upload_and_move_locally, Edit, Move, [("e/r.txt", "c1")]);
-file_cell!(file_edit_both_a_at_remote_place, Edit, Both, [("e/r.txt", "c2"), (&format!("e/r {COPY}.txt"), "c1")]);
-file_cell!(file_edit_delete_b_edit_wins, Edit, Delete, [("d/x.txt", "c1")]);
+file_cell!(
+    file_edit_edit_a_conflict_copy,
+    Edit,
+    Edit,
+    [("d/x.txt", "c2"), (&format!("d/x {COPY}.txt"), "c1")]
+);
+file_cell!(
+    file_edit_move_upload_and_move_locally,
+    Edit,
+    Move,
+    [("e/r.txt", "c1")]
+);
+file_cell!(
+    file_edit_both_a_at_remote_place,
+    Edit,
+    Both,
+    [("e/r.txt", "c2"), (&format!("e/r {COPY}.txt"), "c1")]
+);
+file_cell!(
+    file_edit_delete_b_edit_wins,
+    Edit,
+    Delete,
+    [("d/x.txt", "c1")]
+);
 // Row move.
-file_cell!(file_move_none_move_on_hearth, Move, None, [("e/l.txt", "c0")]);
-file_cell!(file_move_edit_move_on_hearth_download, Move, Edit, [("e/l.txt", "c2")]);
-file_cell!(file_move_move_c_hearth_wins, Move, Move, [("e/r.txt", "c0")]);
-file_cell!(file_move_both_c_then_download, Move, Both, [("e/r.txt", "c2")]);
+file_cell!(
+    file_move_none_move_on_hearth,
+    Move,
+    None,
+    [("e/l.txt", "c0")]
+);
+file_cell!(
+    file_move_edit_move_on_hearth_download,
+    Move,
+    Edit,
+    [("e/l.txt", "c2")]
+);
+file_cell!(
+    file_move_move_c_hearth_wins,
+    Move,
+    Move,
+    [("e/r.txt", "c0")]
+);
+file_cell!(
+    file_move_both_c_then_download,
+    Move,
+    Both,
+    [("e/r.txt", "c2")]
+);
 file_cell!(file_move_delete_d_delete_applied, Move, Delete, []);
 // Row both.
-file_cell!(file_both_none_move_and_upload, Both, None, [("e/l.txt", "c1")]);
-file_cell!(file_both_edit_a_at_local_place, Both, Edit, [("e/l.txt", "c2"), (&format!("e/l {COPY}.txt"), "c1")]);
-file_cell!(file_both_move_c_then_upload, Both, Move, [("e/r.txt", "c1")]);
-file_cell!(file_both_both_c_and_a, Both, Both, [("e/r.txt", "c2"), (&format!("e/r {COPY}.txt"), "c1")]);
+file_cell!(
+    file_both_none_move_and_upload,
+    Both,
+    None,
+    [("e/l.txt", "c1")]
+);
+file_cell!(
+    file_both_edit_a_at_local_place,
+    Both,
+    Edit,
+    [("e/l.txt", "c2"), (&format!("e/l {COPY}.txt"), "c1")]
+);
+file_cell!(
+    file_both_move_c_then_upload,
+    Both,
+    Move,
+    [("e/r.txt", "c1")]
+);
+file_cell!(
+    file_both_both_c_and_a,
+    Both,
+    Both,
+    [("e/r.txt", "c2"), (&format!("e/r {COPY}.txt"), "c1")]
+);
 file_cell!(file_both_delete_b, Both, Delete, [("e/l.txt", "c1")]);
 // Row delete.
 file_cell!(file_delete_none_delete_on_hearth, Delete, None, []);
-file_cell!(file_delete_edit_e_edit_wins, Delete, Edit, [("d/x.txt", "c2")]);
+file_cell!(
+    file_delete_edit_e_edit_wins,
+    Delete,
+    Edit,
+    [("d/x.txt", "c2")]
+);
 file_cell!(file_delete_move_delete_on_hearth, Delete, Move, []);
 file_cell!(file_delete_both_e, Delete, Both, [("e/r.txt", "c2")]);
 file_cell!(file_delete_delete_drop, Delete, Delete, []);
@@ -168,7 +243,10 @@ fn creation_file_file_equal_hash_adopted_as_one() {
 #[test]
 fn creation_file_file_different_remote_keeps_name() {
     let s = creations(file("c5"), file("c6"));
-    ends_with(&s, &[("d/x.txt", "c0"), ("n", "c6"), (&format!("n {COPY}"), "c5")]);
+    ends_with(
+        &s,
+        &[("d/x.txt", "c0"), ("n", "c6"), (&format!("n {COPY}"), "c5")],
+    );
 }
 
 #[test]
@@ -221,9 +299,23 @@ fn creation_same_id_both_sides_without_base_is_a() {
     local.insert(X, ROOT, "x.txt", file("c1"));
     let mut remote = IdTree::new();
     remote.insert(X, ROOT, "x.txt", file("c2"));
-    let s = reconcile(&IdTree::new(), &local, &remote, &ctx(Volume::Ext4, vec![]), 100).expect("ok");
+    let s = reconcile(
+        &IdTree::new(),
+        &local,
+        &remote,
+        &ctx(Volume::Ext4, vec![]),
+        100,
+    )
+    .expect("ok");
     ends_with(&s, &[("x.txt", "c2"), (&format!("x {COPY}.txt"), "c1")]);
-    let s = reconcile(&IdTree::new(), &remote, &remote, &ctx(Volume::Ext4, vec![]), 100).expect("ok");
+    let s = reconcile(
+        &IdTree::new(),
+        &remote,
+        &remote,
+        &ctx(Volume::Ext4, vec![]),
+        100,
+    )
+    .expect("ok");
     ends_with(&s, &[("x.txt", "c2")]);
     assert!(s.copies.is_empty());
 }
@@ -243,7 +335,14 @@ fn folder_case(l: C, r: C) -> Settled {
         }
         t
     };
-    reconcile(&base(), &side(l, "dl"), &side(r, "dr"), &ctx(Volume::Ext4, vec![]), 100).expect("ok")
+    reconcile(
+        &base(),
+        &side(l, "dl"),
+        &side(r, "dr"),
+        &ctx(Volume::Ext4, vec![]),
+        100,
+    )
+    .expect("ok")
 }
 
 macro_rules! folder_cell {
@@ -257,9 +356,19 @@ macro_rules! folder_cell {
 }
 
 folder_cell!(folder_none_none_nothing, None, None, [("d/x.txt", "c0")]);
-folder_cell!(folder_none_move_move_locally, None, Move, [("e/dr/x.txt", "c0")]);
+folder_cell!(
+    folder_none_move_move_locally,
+    None,
+    Move,
+    [("e/dr/x.txt", "c0")]
+);
 folder_cell!(folder_none_delete_f_remove_locally, None, Delete, []);
-folder_cell!(folder_move_none_move_on_hearth, Move, None, [("e/dl/x.txt", "c0")]);
+folder_cell!(
+    folder_move_none_move_on_hearth,
+    Move,
+    None,
+    [("e/dl/x.txt", "c0")]
+);
 folder_cell!(folder_move_move_c, Move, Move, [("e/dr/x.txt", "c0")]);
 folder_cell!(folder_move_delete_g, Move, Delete, []);
 folder_cell!(folder_delete_none_f_delete_on_hearth, Delete, None, []);
@@ -321,7 +430,12 @@ fn retype_is_delete_and_create() {
     local.insert(31, D, "x.txt", Kind::Folder);
     let s = reconcile(&base(), &local, &base(), &ctx(Volume::Ext4, vec![]), 100).expect("ok");
     ends_with(&s, &[]);
-    assert!(s.server.to_paths().get("d/x.txt").is_some_and(Kind::is_folder));
+    assert!(
+        s.server
+            .to_paths()
+            .get("d/x.txt")
+            .is_some_and(Kind::is_folder)
+    );
     // Remotely edited meanwhile: E keeps the file, the folder takes the
     // name, the file steps aside as a copy on its own side.
     let mut remote = base();
@@ -341,9 +455,19 @@ fn read_only() -> Vec<MountRule> {
 fn permissions_read_only_edit_restored_and_copy_kept_locally() {
     let mut local = base();
     local.insert(X, D, "x.txt", file("c1"));
-    let s = reconcile(&base(), &local, &base(), &ctx(Volume::Ext4, read_only()), 100).expect("ok");
+    let s = reconcile(
+        &base(),
+        &local,
+        &base(),
+        &ctx(Volume::Ext4, read_only()),
+        100,
+    )
+    .expect("ok");
     assert_eq!(files(&s.server), want(&[("d/x.txt", "c0")]));
-    assert_eq!(files(&s.device), want(&[("d/x.txt", "c0"), (&format!("d/x {COPY}.txt"), "c1")]));
+    assert_eq!(
+        files(&s.device),
+        want(&[("d/x.txt", "c0"), (&format!("d/x {COPY}.txt"), "c1")])
+    );
     assert!(s.listed.values().any(|l| *l == Listing::ReadOnlyEdit));
 }
 
@@ -351,7 +475,14 @@ fn permissions_read_only_edit_restored_and_copy_kept_locally() {
 fn permissions_read_only_delete_downloaded_again() {
     let mut local = base();
     local.nodes.remove(&X);
-    let s = reconcile(&base(), &local, &base(), &ctx(Volume::Ext4, read_only()), 100).expect("ok");
+    let s = reconcile(
+        &base(),
+        &local,
+        &base(),
+        &ctx(Volume::Ext4, read_only()),
+        100,
+    )
+    .expect("ok");
     ends_with(&s, &[("d/x.txt", "c0")]);
 }
 
@@ -359,9 +490,19 @@ fn permissions_read_only_delete_downloaded_again() {
 fn permissions_read_only_create_stays_local() {
     let mut local = base();
     local.insert(30, D, "new.txt", file("c3"));
-    let s = reconcile(&base(), &local, &base(), &ctx(Volume::Ext4, read_only()), 100).expect("ok");
+    let s = reconcile(
+        &base(),
+        &local,
+        &base(),
+        &ctx(Volume::Ext4, read_only()),
+        100,
+    )
+    .expect("ok");
     assert_eq!(files(&s.server), want(&[("d/x.txt", "c0")]));
-    assert_eq!(files(&s.device), want(&[("d/x.txt", "c0"), ("d/new.txt", "c3")]));
+    assert_eq!(
+        files(&s.device),
+        want(&[("d/x.txt", "c0"), ("d/new.txt", "c3")])
+    );
     assert_eq!(s.listed.get(&30), Some(&Listing::ReadOnlyCreate));
 }
 
@@ -369,7 +510,14 @@ fn permissions_read_only_create_stays_local() {
 fn permissions_read_only_move_out_undone() {
     let mut local = base();
     local.insert(X, E, "x.txt", file("c0"));
-    let s = reconcile(&base(), &local, &base(), &ctx(Volume::Ext4, read_only()), 100).expect("ok");
+    let s = reconcile(
+        &base(),
+        &local,
+        &base(),
+        &ctx(Volume::Ext4, read_only()),
+        100,
+    )
+    .expect("ok");
     ends_with(&s, &[("d/x.txt", "c0")]);
     assert_eq!(s.listed.get(&X), Some(&Listing::ReadOnlyMove));
 }
@@ -435,7 +583,14 @@ fn names_nfd_local_file_uploaded_under_its_nfc_name() {
     let s = reconcile(&base(), &local, &base(), &ctx(Volume::HfsPlus, vec![]), 100).expect("ok");
     assert!(files(&s.server).contains(&("Caf\u{E9}".to_string(), "c3".to_string())));
     // Not a rename next time: same name in another form.
-    let again = reconcile(&s.base, &local, &s.server, &ctx(Volume::HfsPlus, vec![]), 100).expect("ok");
+    let again = reconcile(
+        &s.base,
+        &local,
+        &s.server,
+        &ctx(Volume::HfsPlus, vec![]),
+        100,
+    )
+    .expect("ok");
     assert_eq!(files(&again.server), files(&s.server));
     assert!(again.copies.is_empty());
 }
@@ -469,7 +624,10 @@ fn conflict_copy_numbering_when_the_name_is_taken() {
     remote.insert(X, D, "x.txt", file("c2"));
     let s = reconcile(&b, &local, &remote, &ctx(Volume::Ext4, vec![]), 100).expect("ok");
     let names: Vec<String> = files(&s.server).into_iter().map(|(p, _)| p).collect();
-    assert!(names.contains(&"d/x (conflict Lap, 1970-01-01 00.00.00 2).txt".to_string()), "{names:?}");
+    assert!(
+        names.contains(&"d/x (conflict Lap, 1970-01-01 00.00.00 2).txt".to_string()),
+        "{names:?}"
+    );
 }
 
 #[test]
@@ -493,7 +651,14 @@ fn every_cell_is_reached() {
     both.insert(50, ROOT, "f", Kind::Folder);
     both.insert(51, ROOT, "g", file("c"));
     let ctx = ctx(Volume::Ext4, vec![]);
-    reached.extend(reconcile(&IdTree::new(), &both, &both, &ctx, 100).expect("ok").cells);
-    let missing: Vec<String> = all_cells().into_iter().filter(|c| !reached.contains(c)).collect();
+    reached.extend(
+        reconcile(&IdTree::new(), &both, &both, &ctx, 100)
+            .expect("ok")
+            .cells,
+    );
+    let missing: Vec<String> = all_cells()
+        .into_iter()
+        .filter(|c| !reached.contains(c))
+        .collect();
     assert!(missing.is_empty(), "cells never reached: {missing:?}");
 }

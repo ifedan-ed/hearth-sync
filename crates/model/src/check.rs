@@ -19,8 +19,8 @@ use crate::name::{device_refuses, hearth_refuses_local, is_engine_name, name_key
 use crate::reconcile::perms;
 use crate::scenario::{Act, AdminOp, FaultOp, Side};
 use crate::trace::{
-    Condition, DeviceView, EngineAction, Event, Outcome, Request, RequestKind, RootState, ServerView, Snapshot, Trace,
-    Write, WriteOp,
+    Condition, DeviceView, EngineAction, Event, Outcome, Request, RequestKind, RootState,
+    ServerView, Snapshot, Trace, Write, WriteOp,
 };
 use crate::tree::{Hash, Kind, PathTree, base_name, is_within, nfc_path, parent_path};
 
@@ -141,7 +141,14 @@ impl CheckConfig {
     }
 }
 
-fn violation(g: Guarantee, step: usize, device: Option<&str>, path: Option<&str>, expected: String, found: String) -> Violation {
+fn violation(
+    g: Guarantee,
+    step: usize,
+    device: Option<&str>,
+    path: Option<&str>,
+    expected: String,
+    found: String,
+) -> Violation {
     Violation {
         guarantee: g,
         step: Some(step),
@@ -213,7 +220,10 @@ fn everywhere(s: &Snapshot) -> BTreeSet<Hash> {
 }
 
 /// The mount a server path is in: the longest mount path above it.
-pub fn mount_of<'a>(server: &'a ServerView, path: &str) -> Option<(&'a String, &'a crate::trace::MountView)> {
+pub fn mount_of<'a>(
+    server: &'a ServerView,
+    path: &str,
+) -> Option<(&'a String, &'a crate::trace::MountView)> {
     server
         .mounts
         .iter()
@@ -236,7 +246,9 @@ pub fn mount_of<'a>(server: &'a ServerView, path: &str) -> Option<(&'a String, &
 pub fn check_i1(trace: &Trace) -> Vec<Violation> {
     let mut out = Vec::new();
     for (i, step) in trace.steps.iter().enumerate() {
-        let Some(dev) = engine_device(&step.event) else { continue };
+        let Some(dev) = engine_device(&step.event) else {
+            continue;
+        };
         let before = trace.before(i);
         let after = &step.after;
         if let (Some(b), Some(a)) = (before.device(dev), after.device(dev)) {
@@ -257,7 +269,10 @@ pub fn check_i1(trace: &Trace) -> Vec<Violation> {
         if is_final_write(&step.event, &before.server) {
             continue;
         }
-        let gone: Vec<Hash> = everywhere(before).difference(&everywhere(after)).cloned().collect();
+        let gone: Vec<Hash> = everywhere(before)
+            .difference(&everywhere(after))
+            .cloned()
+            .collect();
         for h in gone {
             out.push(violation(
                 Guarantee::I1,
@@ -276,12 +291,18 @@ pub fn check_i1(trace: &Trace) -> Vec<Violation> {
 /// final: a delete on a mount without trash, or a replace on a mount
 /// without versions (sync-api 4: `trash`, `versions`; 17, I1 row).
 fn is_final_write(event: &Event, server: &ServerView) -> bool {
-    let Some((_, r)) = request(event) else { return false };
-    let RequestKind::Write(w) = &r.kind else { return false };
+    let Some((_, r)) = request(event) else {
+        return false;
+    };
+    let RequestKind::Write(w) = &r.kind else {
+        return false;
+    };
     if !matches!(r.outcome, Outcome::Done | Outcome::AnswerLost) {
         return false;
     }
-    let Some((_, m)) = mount_of(server, &w.path) else { return false };
+    let Some((_, m)) = mount_of(server, &w.path) else {
+        return false;
+    };
     match w.op {
         WriteOp::DeleteFile | WriteOp::DeleteFolder => !m.trash,
         WriteOp::Replace => !m.versions,
@@ -303,12 +324,16 @@ fn is_final_write(event: &Event, server: &ServerView) -> bool {
 pub fn check_i2(trace: &Trace) -> Vec<Violation> {
     let mut out = Vec::new();
     for (i, step) in trace.steps.iter().enumerate() {
-        let Some(dev) = engine_device(&step.event) else { continue };
+        let Some(dev) = engine_device(&step.event) else {
+            continue;
+        };
         let (Some(b), Some(a)) = (trace.before(i).device(dev), step.after.device(dev)) else {
             continue;
         };
         for (path, kind) in &b.tree.entries {
-            let Kind::File { hash: old, .. } = kind else { continue };
+            let Kind::File { hash: old, .. } = kind else {
+                continue;
+            };
             if a.tree.hash_at(path) == Some(old) {
                 continue;
             }
@@ -339,30 +364,61 @@ pub fn check_i2(trace: &Trace) -> Vec<Violation> {
 /// Checked for every write Hearth carried out (answered or answer lost):
 /// it carried the condition its operation requires (8.1 table); a file
 /// condition named exactly the version Hearth held; and that version was
-/// in the device's view of Hearth just before (it had received it).
+/// in the device's view of Hearth just before (it had received it; at any
+/// path, since the device's own moves change where it is), or is content
+/// the device itself sent earlier.
 pub fn check_i3(trace: &Trace) -> Vec<Violation> {
     let mut out = Vec::new();
+    // Contents each device sent itself: a hash condition on its own bytes
+    // names a version it knows (sync-api 8.1, `ifHash`).
+    let mut sent: BTreeMap<&str, BTreeSet<&Hash>> = BTreeMap::new();
     for (i, step) in trace.steps.iter().enumerate() {
-        let Some((dev, r)) = request(&step.event) else { continue };
-        let RequestKind::Write(w) = &r.kind else { continue };
+        let Some((dev, r)) = request(&step.event) else {
+            continue;
+        };
+        if let RequestKind::Upload { hash, .. } = &r.kind {
+            sent.entry(dev).or_default().insert(hash);
+        }
+        let RequestKind::Write(w) = &r.kind else {
+            continue;
+        };
         if !matches!(r.outcome, Outcome::Done | Outcome::AnswerLost) {
             continue;
         }
         let before = trace.before(i);
-        if let Some(problem) = write_condition_problem(w, before.device(dev)) {
-            out.push(violation(Guarantee::I3, i, Some(dev), Some(&w.path), problem.0, problem.1));
+        let own = sent.get(dev);
+        if let Some(problem) = write_condition_problem(w, before.device(dev), |h| {
+            own.is_some_and(|o| o.contains(h))
+        }) {
+            out.push(violation(
+                Guarantee::I3,
+                i,
+                Some(dev),
+                Some(&w.path),
+                problem.0,
+                problem.1,
+            ));
         }
     }
     out
 }
 
 /// What is wrong with a carried-out write's condition, if anything.
-fn write_condition_problem(w: &Write, device: Option<&DeviceView>) -> Option<(String, String)> {
-    let found = format!("condition {:?} with Hearth holding {:?}", w.condition, w.before);
+fn write_condition_problem(
+    w: &Write,
+    device: Option<&DeviceView>,
+    sent: impl Fn(&Hash) -> bool,
+) -> Option<(String, String)> {
+    let found = format!(
+        "condition {:?} with Hearth holding {:?}",
+        w.condition, w.before
+    );
     let file_version = |held: &Hash| -> Option<(String, String)> {
         match &w.condition {
             Some(Condition::Version(v)) if v == held => {
-                let seen = device.is_some_and(|d| d.remote_view.hash_at(&w.path) == Some(v));
+                // At any path: the device's own moves in the same run
+                // change where it is, not which version it is.
+                let seen = device.is_some_and(|d| d.remote_view.holds(v)) || sent(v);
                 (!seen).then(|| {
                     (
                         format!("the condition's version {v} to be one the device had received"),
@@ -370,24 +426,29 @@ fn write_condition_problem(w: &Write, device: Option<&DeviceView>) -> Option<(St
                     )
                 })
             }
-            _ => Some((format!("a condition on the version Hearth held ({held})"), found.clone())),
+            _ => Some((
+                format!("a condition on the version Hearth held ({held})"),
+                found.clone(),
+            )),
         }
     };
     match (&w.op, &w.before) {
-        (WriteOp::CreateFile | WriteOp::Mkdir, None) => {
-            (w.condition != Some(Condition::Absent)).then(|| ("the create to carry If-None-Match: *".into(), found.clone()))
-        }
+        (WriteOp::CreateFile | WriteOp::Mkdir, None) => (w.condition != Some(Condition::Absent))
+            .then(|| ("the create to carry If-None-Match: *".into(), found.clone())),
         (WriteOp::CreateFile | WriteOp::Mkdir, Some(held)) => Some((
             format!("no create over an existing file ({held})"),
             found.clone(),
         )),
         (WriteOp::Replace | WriteOp::DeleteFile, Some(held)) => file_version(held),
         (WriteOp::Move(_), Some(held)) => file_version(held),
-        (WriteOp::Move(_), None) => {
-            (w.condition != Some(Condition::Seq)).then(|| ("a folder's move to carry its seq".into(), found.clone()))
-        }
-        (WriteOp::DeleteFolder, _) => (w.condition != Some(Condition::UnchangedSince))
-            .then(|| ("a folder's delete to carry the unchanged-since condition".into(), found.clone())),
+        (WriteOp::Move(_), None) => (w.condition != Some(Condition::Seq))
+            .then(|| ("a folder's move to carry its seq".into(), found.clone())),
+        (WriteOp::DeleteFolder, _) => (w.condition != Some(Condition::UnchangedSince)).then(|| {
+            (
+                "a folder's delete to carry the unchanged-since condition".into(),
+                found.clone(),
+            )
+        }),
         (WriteOp::Replace | WriteOp::DeleteFile, None) => Some((
             "a replace or delete to name a file Hearth held".into(),
             found.clone(),
@@ -413,8 +474,17 @@ pub fn check_i4_i5(trace: &Trace) -> Vec<Violation> {
     let mut out = Vec::new();
     for (i, step) in trace.steps.iter().enumerate() {
         match &step.event {
-            Event::Person { act, applied: true, side } => {
-                known.extend(act_content(act, side, trace.before(i)));
+            Event::Person {
+                act,
+                applied: true,
+                side,
+            } => {
+                known.extend(act_content(
+                    &trace.scenario.devices,
+                    act,
+                    side,
+                    trace.before(i),
+                ));
             }
             Event::Fault {
                 device,
@@ -469,25 +539,86 @@ pub fn check_i4_i5(trace: &Trace) -> Vec<Violation> {
 }
 
 /// The contents a person's act brings into the world.
-pub fn act_content(act: &Act, side: &Side, before: &Snapshot) -> Vec<Hash> {
+pub fn act_content(
+    devices: &[crate::scenario::DeviceSpec],
+    act: &Act,
+    side: &Side,
+    before: &Snapshot,
+) -> Vec<Hash> {
+    let found =
+        |path: &str| side_tree(devices, side, before).and_then(|(t, v)| find_on_side(t, v, path));
     match act {
-        Act::Create { content, .. } | Act::Edit { content, .. } | Act::Retype { content, .. } => vec![content.clone()],
-        Act::Copy { from, .. } => {
-            let tree = match side {
-                Side::Web => Some(&before.server.tree),
-                Side::Device(d) => before.device(d).map(|d| &d.tree),
-            };
-            tree.and_then(|t| find_by_nfc(t, from)).and_then(|k| k.hash().cloned()).into_iter().collect()
-        }
+        Act::Create { content, .. } | Act::Edit { content, .. } => vec![content.clone()],
+        // A folder becoming a file makes a content; a file becoming a
+        // folder makes none.
+        Act::Retype { path, content } => match found(path) {
+            Some(Kind::Folder) => vec![content.clone()],
+            _ => Vec::new(),
+        },
+        Act::Copy { from, .. } => found(from)
+            .and_then(|k| k.hash().cloned())
+            .into_iter()
+            .collect(),
         Act::Mkdir { .. } | Act::Rename { .. } | Act::Delete { .. } => Vec::new(),
     }
+}
+
+/// The tree of the side an act was made on, and how that side compares
+/// names: a device by its volume's key, Hearth in NFC.
+pub fn side_tree<'a>(
+    trace_devices: &[crate::scenario::DeviceSpec],
+    side: &Side,
+    s: &'a Snapshot,
+) -> Option<(&'a PathTree, Option<crate::name::Volume>)> {
+    match side {
+        Side::Web => Some((&s.server.tree, None)),
+        Side::Device(d) => {
+            let volume = trace_devices
+                .iter()
+                .find(|x| x.name == *d)
+                .map(|x| x.volume);
+            s.device(d).map(|t| (&t.tree, volume))
+        }
+    }
+}
+
+/// A path as a side compares it: each name by the volume's key, or in
+/// NFC on Hearth.
+pub fn side_key(volume: Option<crate::name::Volume>, path: &str) -> String {
+    match volume {
+        Some(v) => path
+            .split('/')
+            .map(|n| name_key(v, n))
+            .collect::<Vec<_>>()
+            .join("/"),
+        None => nfc_path(path),
+    }
+}
+
+/// The entry a person on that side means by `path`.
+pub fn find_on_side<'a>(
+    tree: &'a PathTree,
+    volume: Option<crate::name::Volume>,
+    path: &str,
+) -> Option<&'a Kind> {
+    let want = side_key(volume, path);
+    tree.get(path).or_else(|| {
+        tree.entries
+            .iter()
+            .find(|(p, _)| side_key(volume, p) == want)
+            .map(|(_, k)| k)
+    })
 }
 
 /// The entry at `path` in `tree`, comparing paths in NFC.
 pub fn find_by_nfc<'a>(tree: &'a PathTree, path: &str) -> Option<&'a Kind> {
     let want = nfc_path(path);
-    tree.get(path)
-        .or_else(|| tree.entries.iter().find(|(p, _)| nfc_path(p) == want).map(|(_, k)| k))
+    tree.get(path).or_else(|| {
+        tree.entries
+            .iter()
+            .find(|(p, _)| nfc_path(p) == want)
+            .map(|(_, k)| k)
+    })
 }
 
 /// I6 (sync.md 2 and 3.11): "A missing, empty or unmounted sync root is
@@ -508,13 +639,20 @@ pub fn check_i6(trace: &Trace) -> Vec<Violation> {
             Event::Settled => after_restore = false,
             _ => {}
         }
-        let Some(dev) = engine_device(&step.event) else { continue };
+        let Some(dev) = engine_device(&step.event) else {
+            continue;
+        };
         let before = trace.before(i);
-        let Some(b) = before.device(dev) else { continue };
+        let Some(b) = before.device(dev) else {
+            continue;
+        };
         if b.root != RootState::Present {
             if let Some((_, r)) = request(&step.event)
                 && let RequestKind::Write(w) = &r.kind
-                && matches!(w.op, WriteOp::DeleteFile | WriteOp::DeleteFolder | WriteOp::Move(_))
+                && matches!(
+                    w.op,
+                    WriteOp::DeleteFile | WriteOp::DeleteFolder | WriteOp::Move(_)
+                )
                 && matches!(r.outcome, Outcome::Done | Outcome::AnswerLost)
             {
                 out.push(violation(
@@ -605,7 +743,9 @@ pub fn check_i7_quiescence(trace: &Trace, cfg: &CheckConfig) -> Vec<Violation> {
                 since_outside += 1;
                 if quiet {
                     let bad = match action {
-                        EngineAction::Request(r) => !matches!(r.kind, RequestKind::Wait | RequestKind::Other(_)),
+                        EngineAction::Request(r) => {
+                            !matches!(r.kind, RequestKind::Wait | RequestKind::Other(_))
+                        }
                         EngineAction::Disk(_) => true,
                         EngineAction::Purge | EngineAction::Note(_) => false,
                     };
@@ -676,7 +816,9 @@ pub fn check_i8(trace: &Trace) -> Vec<Violation> {
             for (path, kind) in &server.entries {
                 let here = local.get(path);
                 if here.is_some_and(|k| k.same_content(kind)) {
-                    if !d.synced.get(path).is_some_and(|s| s.same_content(kind)) && listed_reason(d, path).is_none() {
+                    if !d.synced.get(path).is_some_and(|s| s.same_content(kind))
+                        && listed_reason(d, path).is_none()
+                    {
                         out.push(violation(
                             Guarantee::I8,
                             i,
@@ -740,11 +882,19 @@ pub fn check_i9(trace: &Trace) -> Vec<Violation> {
         .collect();
     for (i, step) in trace.steps.iter().enumerate() {
         match &step.event {
-            Event::Person { act, side, applied: true } => {
-                for h in act_content(act, side, trace.before(i)) {
+            Event::Person {
+                act,
+                side,
+                applied: true,
+            } => {
+                for h in act_content(&trace.scenario.devices, act, side, trace.before(i)) {
                     *allowance.entry(h).or_insert(0) += 1;
                 }
-                if let Act::Create { path, .. } | Act::Rename { to: path, .. } | Act::Copy { to: path, .. } | Act::Mkdir { path } = act {
+                if let Act::Create { path, .. }
+                | Act::Rename { to: path, .. }
+                | Act::Copy { to: path, .. }
+                | Act::Mkdir { path } = act
+                {
                     person_names.insert(nfc(base_name(path)));
                 }
             }
@@ -787,7 +937,8 @@ pub fn check_i9(trace: &Trace) -> Vec<Violation> {
                     if !name.contains(" (conflict ") || person_names.contains(name) {
                         continue;
                     }
-                    let ok = crate::name::parse_conflict_name(name).is_some_and(|c| labels.contains(&c.device));
+                    let ok = crate::name::parse_conflict_name(name)
+                        .is_some_and(|c| labels.contains(&c.device));
                     if !ok {
                         out.push(violation(
                             Guarantee::I9,
@@ -810,9 +961,11 @@ pub fn check_i9(trace: &Trace) -> Vec<Violation> {
 /// on the side that has them, are listed with the reason, and never block
 /// other items."
 ///
-/// Checked at every step: each listing's reason is one the documents give
-/// and is true of that item by the model's own name and rights rules; and
-/// an engine step never changes a listed item on the device. That listed
+/// Checked: at every settled point, each listing's reason is one the
+/// documents give and is true of that item by the model's own name and
+/// rights rules (between settled points a listing may lag the round that
+/// resolves it); and at every step, an engine never changes a listed item
+/// on the device. That listed
 /// items block nothing is the convergence of everything else, which I8
 /// checks with only listed items excused.
 pub fn check_i10(trace: &Trace) -> Vec<Violation> {
@@ -820,7 +973,52 @@ pub fn check_i10(trace: &Trace) -> Vec<Violation> {
     let mut refused: BTreeSet<String> = BTreeSet::new();
     let mut denied: BTreeSet<(String, String)> = BTreeSet::new();
     let mut share_left = false;
+    // Every name a person or the start ever gave, in NFC.
+    let mut given: BTreeSet<String> = BTreeSet::new();
+    for t in std::iter::once(&trace.start.server.tree)
+        .chain(trace.start.devices.values().map(|d| &d.tree))
+    {
+        given.extend(t.entries.keys().flat_map(|p| p.split('/').map(nfc)));
+    }
+    for m in &trace.scenario.mounts {
+        given.extend(m.path.split('/').map(nfc));
+    }
     for (i, step) in trace.steps.iter().enumerate() {
+        if let Event::Person { act, .. } = &step.event {
+            let paths: Vec<&String> = match act {
+                Act::Create { path, .. }
+                | Act::Edit { path, .. }
+                | Act::Mkdir { path }
+                | Act::Delete { path }
+                | Act::Retype { path, .. } => vec![path],
+                Act::Rename { from, to } | Act::Copy { from, to } => vec![from, to],
+            };
+            given.extend(paths.into_iter().flat_map(|p| p.split('/').map(nfc)));
+        }
+        // The engine invents no names: everything on Hearth at a settled
+        // point is named as a person named it, or is a conflict copy, or
+        // the folder a departed share's changes are kept in (sync.md
+        // 3.5.1, 3.8 "the engine never renames a file on Hearth because
+        // one device cannot hold its name", 4.2).
+        if matches!(step.event, Event::Settled) {
+            for path in step.after.server.tree.entries.keys() {
+                for name in path.split('/') {
+                    if !given.contains(name)
+                        && crate::name::parse_conflict_name(name).is_none()
+                        && !name.ends_with(" (no longer shared)")
+                    {
+                        out.push(violation(
+                            Guarantee::I10,
+                            i,
+                            None,
+                            Some(path),
+                            "only names people gave, or conflict copy names, on Hearth".into(),
+                            format!("the name {name:?}, which nobody gave"),
+                        ));
+                    }
+                }
+            }
+        }
         match &step.event {
             Event::Admin(AdminOp::Refuse { path, code }) => {
                 refused.insert(format!("{}\u{0}{code}", nfc_path(path)));
@@ -834,10 +1032,23 @@ pub fn check_i10(trace: &Trace) -> Vec<Violation> {
             }
             _ => {}
         }
-        for (name, d) in &step.after.devices {
+        // A listing may lag the round that resolves it by a few steps;
+        // that it is true is judged where the run has settled.
+        let settled = matches!(step.event, Event::Settled);
+        for (name, d) in step.after.devices.iter().filter(|_| settled) {
             let volume = trace.scenario.device(name).map(|s| s.volume);
             for (path, reason) in &d.listed {
-                let ok = listing_is_true(path, reason, d, &step.after.server, volume, &refused, &denied, name, share_left);
+                let ok = listing_is_true(
+                    path,
+                    reason,
+                    d,
+                    &step.after.server,
+                    volume,
+                    &refused,
+                    &denied,
+                    name,
+                    share_left,
+                );
                 if !ok {
                     out.push(violation(
                         Guarantee::I10,
@@ -850,13 +1061,39 @@ pub fn check_i10(trace: &Trace) -> Vec<Violation> {
                 }
             }
         }
-        let Some(dev) = engine_device(&step.event) else { continue };
+        let Some(dev) = engine_device(&step.event) else {
+            continue;
+        };
         let (Some(b), Some(a)) = (trace.before(i).device(dev), step.after.device(dev)) else {
             continue;
         };
-        for path in b.listed.keys() {
+        // The listings at the end of this run of the device's engine: an
+        // item whose reason ended (Hearth deleted it, the clash went) may
+        // be acted on in the run that stops listing it.
+        let mut end = i;
+        while trace
+            .steps
+            .get(end + 1)
+            .is_some_and(|s| engine_device(&s.event) == Some(dev))
+        {
+            end += 1;
+        }
+        let still = trace.steps[end].after.device(dev).map(|d| &d.listed);
+        for path in b
+            .listed
+            .keys()
+            .filter(|p| still.is_some_and(|l| l.contains_key(*p)))
+        {
             for (p, kind) in b.tree.entries.iter().filter(|(p, _)| is_within(p, path)) {
-                if a.tree.get(p) != Some(kind) {
+                // Still there, or carried along by a folder that moved
+                // (same name, same content, another folder).
+                let kept = a.tree.get(p) == Some(kind)
+                    || a.tree.entries.iter().any(|(q, k)| {
+                        base_name(q) == base_name(p)
+                            && k.same_content(kind)
+                            && !b.tree.entries.contains_key(q)
+                    });
+                if !kept {
                     out.push(violation(
                         Guarantee::I10,
                         i,
@@ -898,7 +1135,9 @@ fn listing_is_true(
         return hearth_refuses_local(name).is_some_and(|r| r.code() == code);
     }
     if let Some(code) = reason.strip_prefix("device_refused:") {
-        return volume.and_then(|v| device_refuses(v, &nfc(name))).is_some_and(|r| r.code() == code);
+        return volume
+            .and_then(|v| device_refuses(v, &nfc(name)))
+            .is_some_and(|r| r.code() == code);
     }
     if let Some(code) = reason.strip_prefix("refused:") {
         return refused.iter().any(|r| {
@@ -907,7 +1146,7 @@ fn listing_is_true(
         });
     }
     match reason {
-        "engine_name" => parent_path(path).is_empty() && is_engine_name(name),
+        "engine_name" => is_engine_name(name, parent_path(path).is_empty()),
         "name_clash" => {
             let Some(v) = volume else { return false };
             let key = name_key(v, name);
@@ -915,20 +1154,48 @@ fn listing_is_true(
             let same_key = |t: &PathTree| {
                 t.entries
                     .keys()
-                    .filter(|q| parent_path(&nfc_path(q)) == folder && name_key(v, base_name(q)) == key)
+                    .filter(|q| {
+                        parent_path(&nfc_path(q)) == folder && name_key(v, base_name(q)) == key
+                    })
                     .map(|q| nfc_path(q))
                     .collect::<BTreeSet<_>>()
             };
             let mut names = same_key(&server.tree);
             names.extend(same_key(&d.tree));
             names.insert(p.clone());
-            names.len() > 1
+            // Two names one device holds as one, or one name held with
+            // different contents on the two sides (one side's item could
+            // not be sent).
+            let differs = match (
+                server.tree.get(&p),
+                d.tree.entries.iter().find(|(q, _)| nfc_path(q) == p),
+            ) {
+                (Some(a), Some((_, b))) => !a.same_content(b),
+                _ => false,
+            };
+            names.len() > 1 || differs
         }
         "read_only_edit" => lacks(perms::UPDATE),
         "read_only_create" => lacks(perms::CREATE),
         "read_only_move" => lacks(perms::DELETE) || lacks(perms::CREATE),
-        "denied" => denied.iter().any(|(dv, dp)| dv == device && is_within(&p, dp)),
-        "no_longer_shared" => share_left && p.split('/').any(|n| n.ends_with(" (no longer shared)")),
+        "denied" => denied
+            .iter()
+            .any(|(dv, dp)| dv == device && is_within(&p, dp)),
+        "inside_listed" => d
+            .listed
+            .keys()
+            .any(|l| *l != path && is_within(&p, &nfc_path(l))),
+        // One item held under two names, because one side cannot take
+        // the other's name (a remote rename to a name this device cannot
+        // hold, Q10; a local rename to a name Hearth refuses, 3.8): the
+        // side with the refused name is listed with its reason, the other
+        // name with this code. True while exactly one side holds the path.
+        "other_name" => {
+            d.tree.entries.keys().any(|q| nfc_path(q) == p) != server.tree.get(&p).is_some()
+        }
+        "no_longer_shared" => {
+            share_left && p.split('/').any(|n| n.ends_with(" (no longer shared)"))
+        }
         _ => false,
     }
 }
@@ -948,7 +1215,9 @@ pub fn check_i11(trace: &Trace) -> Vec<Violation> {
     let mut uploaded: BTreeSet<(String, String, Hash)> = BTreeSet::new();
     let mut downloaded: BTreeSet<(String, String, Hash)> = BTreeSet::new();
     for (i, step) in trace.steps.iter().enumerate() {
-        let Some((dev, r)) = request(&step.event) else { continue };
+        let Some((dev, r)) = request(&step.event) else {
+            continue;
+        };
         let before = trace.before(i);
         match &r.kind {
             RequestKind::Upload { path, hash } => {
@@ -959,7 +1228,9 @@ pub fn check_i11(trace: &Trace) -> Vec<Violation> {
                         i,
                         Some(dev),
                         Some(path),
-                        format!("no second upload of {hash}: the first was answered and Hearth holds it"),
+                        format!(
+                            "no second upload of {hash}: the first was answered and Hearth holds it"
+                        ),
                         "uploaded again".into(),
                     ));
                 }
@@ -999,30 +1270,41 @@ pub fn check_i11(trace: &Trace) -> Vec<Violation> {
 /// adopted without transfer; differing ones become conflict copies)."
 /// Losing no data is I1 and the settled outcome; checked here: after the
 /// database is deleted and until the run settles, the device transfers
-/// no content that both sides already held at the same path.
+/// no content that both sides hold at the same path at that moment.
+/// (A file the person deletes meanwhile is rightly fetched again: without
+/// its history the device cannot tell a delete from a file it never had.)
 pub fn check_i12(trace: &Trace) -> Vec<Violation> {
     let mut out = Vec::new();
-    let mut lost_db: BTreeMap<String, (PathTree, PathTree)> = BTreeMap::new();
+    let mut lost_db: BTreeSet<String> = BTreeSet::new();
     for (i, step) in trace.steps.iter().enumerate() {
         match &step.event {
             Event::Fault {
                 device,
                 fault: FaultOp::DbDeleted,
             } => {
-                if let Some(d) = step.after.device(device) {
-                    lost_db.insert(device.clone(), (d.tree.nfc(), step.after.server.tree.clone()));
-                }
+                lost_db.insert(device.clone());
             }
             Event::Settled => lost_db.clear(),
             _ => {}
         }
-        let Some((dev, r)) = request(&step.event) else { continue };
-        let Some((local, server)) = lost_db.get(dev) else { continue };
+        let Some((dev, r)) = request(&step.event) else {
+            continue;
+        };
+        if !lost_db.contains(dev) {
+            continue;
+        }
         let (path, hash) = match &r.kind {
-            RequestKind::Download { path, hash } | RequestKind::Upload { path, hash } => (path, hash),
+            RequestKind::Download { path, hash } | RequestKind::Upload { path, hash } => {
+                (path, hash)
+            }
             _ => continue,
         };
-        if local.hash_at(path) == Some(hash) && server.hash_at(path) == Some(hash) {
+        let before = trace.before(i);
+        let local = before
+            .device(dev)
+            .and_then(|d| find_by_nfc(&d.tree, path))
+            .and_then(Kind::hash);
+        if local == Some(hash) && before.server.tree.hash_at(path) == Some(hash) {
             out.push(violation(
                 Guarantee::I12,
                 i,
@@ -1078,11 +1360,15 @@ pub fn check_mass_change(trace: &Trace, cfg: &CheckConfig) -> Vec<Violation> {
         match &step.event {
             Event::Engine { device, .. } => {
                 let before = trace.before(i);
-                let entry = bursts.entry(device.clone()).or_insert_with(|| (i, BTreeMap::new()));
+                let entry = bursts
+                    .entry(device.clone())
+                    .or_insert_with(|| (i, BTreeMap::new()));
                 let start = entry.0;
                 let removed = removed_files(before, &step.after, device);
                 for path in removed {
-                    let mount = mount_of(&before.server, &path).map(|(m, _)| m.clone()).unwrap_or_default();
+                    let mount = mount_of(&before.server, &path)
+                        .map(|(m, _)| m.clone())
+                        .unwrap_or_default();
                     entry.1.entry(mount).or_default().insert(path);
                 }
                 if confirmed.contains(device) {
@@ -1131,7 +1417,10 @@ pub fn check_mass_change(trace: &Trace, cfg: &CheckConfig) -> Vec<Violation> {
             } => {
                 bursts.remove(device);
             }
-            Event::Person { side: Side::Web, .. } | Event::Admin(_) => bursts.clear(),
+            Event::Person {
+                side: Side::Web, ..
+            }
+            | Event::Admin(_) => bursts.clear(),
         }
     }
     out

@@ -104,7 +104,12 @@ pub const WEIGHTS: &[(Pattern, u32)] = &[
     (Pattern::MassDelete, 1),
 ];
 
-const DEVICE_NAMES: &[&str] = &["Lap", "Desk", "Phone-1", "My:PC|with a name over thirty characters"];
+const DEVICE_NAMES: &[&str] = &[
+    "Lap",
+    "Desk",
+    "Phone-1",
+    "My:PC|with a name over thirty characters",
+];
 // (At most three devices are generated, so the fourth name is only ever
 // the first device's.)
 const OFFSETS: &[i64] = &[0, 3600, -18_000, 19_800, 46_800];
@@ -122,6 +127,9 @@ struct Gen {
     devices: Vec<String>,
     mount_present: bool,
     has_mount: bool,
+    /// A pause is waiting for the person (a mass change, a replaced
+    /// root): every `settle` is preceded by the confirmations.
+    pending_confirm: bool,
 }
 
 /// A random scenario for `seed`.
@@ -137,6 +145,7 @@ pub fn generate(seed: u64, cfg: &GenConfig) -> Scenario {
         devices: Vec::new(),
         mount_present: false,
         has_mount: false,
+        pending_confirm: false,
     };
     let n_devices = 1 + g.rng.below(cfg.max_devices.max(1));
     let mut devices = Vec::new();
@@ -148,7 +157,11 @@ pub fn generate(seed: u64, cfg: &GenConfig) -> Scenario {
         let offset = *g.rng.pick(OFFSETS).unwrap_or(&0);
         // The first device sometimes has the long, odd name that conflict
         // copy names must clean and cut (3.5.1).
-        let name = if i == 0 && g.rng.chance(10) { DEVICE_NAMES[3] } else { name };
+        let name = if i == 0 && g.rng.chance(10) {
+            DEVICE_NAMES[3]
+        } else {
+            name
+        };
         let name = name.to_string();
         devices.push(DeviceSpec {
             name,
@@ -189,7 +202,13 @@ pub fn generate(seed: u64, cfg: &GenConfig) -> Scenario {
 impl Gen {
     fn track_mount(&mut self) {
         let mut next = self.next_id;
-        apply_act(&mut self.world, Namespace::Hearth, &Act::Mkdir { path: MOUNT.into() }, 0, &mut next);
+        apply_act(
+            &mut self.world,
+            Namespace::Hearth,
+            &Act::Mkdir { path: MOUNT.into() },
+            0,
+            &mut next,
+        );
         self.next_id = next;
     }
 
@@ -221,6 +240,18 @@ impl Gen {
             }
         }
         self.plain_name(folder)
+    }
+
+    /// A name for an act on `side`: names like the engine's own are
+    /// made only on the web (a person's own `x.hearthtmp` on a disk is
+    /// left alone by the engine, docs/contract-questions.md Q14).
+    fn name_for(&mut self, side: &Side, folder: bool) -> String {
+        let n = self.name(folder);
+        if matches!(side, Side::Device(_)) && crate::name::is_engine_name(&n, true) {
+            self.plain_name(folder)
+        } else {
+            n
+        }
     }
 
     fn side(&mut self) -> Side {
@@ -283,10 +314,13 @@ impl Gen {
             let parent = self.folder();
             let name = self.plain_name(false);
             let content = self.content();
-            self.push(Side::Web, Act::Create {
-                path: join(&parent, &name),
-                content,
-            });
+            self.push(
+                Side::Web,
+                Act::Create {
+                    path: join(&parent, &name),
+                    content,
+                },
+            );
         }
         self.ops.push(Op::Settle);
     }
@@ -301,15 +335,16 @@ impl Gen {
                 }
             }
         }
-        let mut need_confirm = false;
         let mut vanished: Vec<String> = Vec::new();
         let weights: Vec<u32> = WEIGHTS.iter().map(|(_, w)| *w).collect();
         for _ in 0..1 + self.rng.below(self.cfg.max_patterns.max(1)) {
-            let Some(i) = self.rng.weighted(&weights) else { break };
+            let Some(i) = self.rng.weighted(&weights) else {
+                break;
+            };
             let pattern = WEIGHTS[i].0;
             match self.pattern(pattern) {
                 After::Nothing => {}
-                After::Confirm => need_confirm = true,
+                After::Confirm => self.pending_confirm = true,
                 After::RootBack(d) => vanished.push(d),
             }
         }
@@ -319,10 +354,16 @@ impl Gen {
         for d in vanished {
             self.fault(&d, FaultOp::RootBack);
         }
-        if need_confirm {
+        self.settle();
+    }
+
+    /// `settle`, after the confirmations a pause waits for.
+    fn settle(&mut self) {
+        if self.pending_confirm {
             for d in self.devices.clone() {
                 self.ops.push(Op::Confirm { device: d });
             }
+            self.pending_confirm = false;
         }
         self.ops.push(Op::Settle);
     }
@@ -330,11 +371,15 @@ impl Gen {
     fn pattern(&mut self, p: Pattern) -> After {
         match p {
             Pattern::Create => {
-                let (side, parent, name, content) = (self.side(), self.folder(), self.name(false), self.content());
-                self.push(side, Act::Create {
-                    path: join(&parent, &name),
-                    content,
-                });
+                let (side, parent, content) = (self.side(), self.folder(), self.content());
+                let name = self.name_for(&side, false);
+                self.push(
+                    side,
+                    Act::Create {
+                        path: join(&parent, &name),
+                        content,
+                    },
+                );
             }
             Pattern::Edit => {
                 if let Some(path) = self.existing(false) {
@@ -343,13 +388,20 @@ impl Gen {
                 }
             }
             Pattern::Mkdir => {
-                let (side, parent, name) = (self.side(), self.folder(), self.name(true));
-                self.push(side, Act::Mkdir { path: join(&parent, &name) });
+                let (side, parent) = (self.side(), self.folder());
+                let name = self.name_for(&side, true);
+                self.push(
+                    side,
+                    Act::Mkdir {
+                        path: join(&parent, &name),
+                    },
+                );
             }
             Pattern::Rename => {
                 let folder = self.rng.chance(30);
                 if let Some(from) = self.existing(folder) {
-                    let (side, name) = (self.side(), self.name(false));
+                    let side = self.side();
+                    let name = self.name_for(&side, false);
                     let to = join(parent(&from), &name);
                     self.push(side, Act::Rename { from, to });
                 }
@@ -369,7 +421,13 @@ impl Gen {
                     let name = last(&from);
                     let flipped: String = name
                         .chars()
-                        .map(|c| if c.is_lowercase() { c.to_uppercase().next().unwrap_or(c) } else { c.to_lowercase().next().unwrap_or(c) })
+                        .map(|c| {
+                            if c.is_lowercase() {
+                                c.to_uppercase().next().unwrap_or(c)
+                            } else {
+                                c.to_lowercase().next().unwrap_or(c)
+                            }
+                        })
                         .collect();
                     let to = join(parent(&from), &flipped);
                     self.push(side, Act::Rename { from, to });
@@ -384,11 +442,15 @@ impl Gen {
             }
             Pattern::Copy => {
                 if let Some(from) = self.existing(false) {
-                    let (side, folder, name) = (self.side(), self.folder(), self.name(false));
-                    self.push(side, Act::Copy {
-                        from,
-                        to: join(&folder, &name),
-                    });
+                    let (side, folder) = (self.side(), self.folder());
+                    let name = self.name_for(&side, false);
+                    self.push(
+                        side,
+                        Act::Copy {
+                            from,
+                            to: join(&folder, &name),
+                        },
+                    );
                 }
             }
             Pattern::Retype => {
@@ -414,7 +476,13 @@ impl Gen {
                 if let Some(path) = self.existing(false) {
                     let d = self.device();
                     let c1 = self.content();
-                    self.push(Side::Device(d.clone()), Act::Edit { path: path.clone(), content: c1 });
+                    self.push(
+                        Side::Device(d.clone()),
+                        Act::Edit {
+                            path: path.clone(),
+                            content: c1,
+                        },
+                    );
                     let fault = match self.rng.below(3) {
                         0 => FaultOp::LoseAnswer(1),
                         1 => FaultOp::Stall(1),
@@ -437,7 +505,13 @@ impl Gen {
                         if self.rng.chance(15) {
                             self.push(side, Act::Delete { path: path.clone() });
                         } else {
-                            self.push(side, Act::Edit { path: path.clone(), content });
+                            self.push(
+                                side,
+                                Act::Edit {
+                                    path: path.clone(),
+                                    content,
+                                },
+                            );
                         }
                     }
                 }
@@ -454,11 +528,14 @@ impl Gen {
                     self.push(side.clone(), Act::Mkdir { path: path.clone() });
                 }
                 let content = self.content();
-                self.push(side.clone(), Act::Create {
-                    path: join(&path, "deep.txt"),
-                    content,
-                });
-                self.ops.push(Op::Settle);
+                self.push(
+                    side.clone(),
+                    Act::Create {
+                        path: join(&path, "deep.txt"),
+                        content,
+                    },
+                );
+                self.settle();
                 let renamer = self.side();
                 let to = self.plain_name(true);
                 self.push(renamer, Act::Rename { from: top, to });
@@ -468,8 +545,20 @@ impl Gen {
                     let folder = self.folder();
                     let (s1, s2) = (self.side(), Side::Web);
                     let (c1, c2) = (self.content(), self.content());
-                    self.push(s1, Act::Create { path: join(&folder, a), content: c1 });
-                    self.push(s2, Act::Create { path: join(&folder, b), content: c2 });
+                    self.push(
+                        s1,
+                        Act::Create {
+                            path: join(&folder, a),
+                            content: c1,
+                        },
+                    );
+                    self.push(
+                        s2,
+                        Act::Create {
+                            path: join(&folder, b),
+                            content: c2,
+                        },
+                    );
                 }
             }
             Pattern::Fault => {
@@ -482,7 +571,12 @@ impl Gen {
                     3 => FaultOp::Crash(n),
                     4 => FaultOp::DiskFull(n),
                     5 => FaultOp::Corrupt(n),
-                    _ => FaultOp::Skew(*self.rng.pick(&[-86_400 * 365 * 3, -3600, 3600, 86_400 * 400]).unwrap_or(&0)),
+                    _ => FaultOp::Skew(
+                        *self
+                            .rng
+                            .pick(&[-86_400 * 365 * 3, -3600, 3600, 86_400 * 400])
+                            .unwrap_or(&0),
+                    ),
                 };
                 self.fault(&d, fault);
             }
@@ -514,7 +608,12 @@ impl Gen {
                     4 => match self.existing(false) {
                         Some(path) => AdminOp::Refuse {
                             path,
-                            code: self.rng.pick(&["locked", "quota", "virus", "forbidden"]).copied().unwrap_or("locked").to_string(),
+                            code: self
+                                .rng
+                                .pick(&["locked", "quota", "virus", "forbidden"])
+                                .copied()
+                                .unwrap_or("locked")
+                                .to_string(),
                         },
                         None => AdminOp::Restart,
                     },
@@ -539,15 +638,23 @@ impl Gen {
             Pattern::MassDelete => {
                 let side = Side::Web;
                 let folder = self.plain_name(true);
-                self.push(side.clone(), Act::Mkdir { path: folder.clone() });
+                self.push(
+                    side.clone(),
+                    Act::Mkdir {
+                        path: folder.clone(),
+                    },
+                );
                 for i in 0..60 {
                     let content = self.content();
-                    self.push(side.clone(), Act::Create {
-                        path: format!("{folder}/m{i}.txt"),
-                        content,
-                    });
+                    self.push(
+                        side.clone(),
+                        Act::Create {
+                            path: format!("{folder}/m{i}.txt"),
+                            content,
+                        },
+                    );
                 }
-                self.ops.push(Op::Settle);
+                self.settle();
                 let deleter = self.side();
                 self.push(deleter, Act::Delete { path: folder });
                 return After::Confirm;
@@ -638,7 +745,11 @@ mod tests {
     fn scenarios_round_trip_as_text() {
         for seed in 0..200 {
             let s = generate(seed, &GenConfig::small());
-            assert_eq!(Scenario::parse(&s.to_text()).as_ref(), Ok(&s), "seed {seed}");
+            assert_eq!(
+                Scenario::parse(&s.to_text()).as_ref(),
+                Ok(&s),
+                "seed {seed}"
+            );
             assert_eq!(s.ops.last(), Some(&Op::Settle));
         }
     }

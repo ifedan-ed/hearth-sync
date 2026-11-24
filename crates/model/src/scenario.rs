@@ -243,7 +243,13 @@ impl Scenario {
         let _ = writeln!(out, "{HEADER}");
         let _ = writeln!(out, "seed {}", self.seed);
         for d in &self.devices {
-            let _ = writeln!(out, "device {} {} {:+}", quote(&d.name), d.volume.code(), d.utc_offset_secs);
+            let _ = writeln!(
+                out,
+                "device {} {} {:+}",
+                quote(&d.name),
+                d.volume.code(),
+                d.utc_offset_secs
+            );
         }
         for m in &self.mounts {
             let _ = writeln!(
@@ -287,13 +293,20 @@ impl Scenario {
             if !body {
                 match w.as_slice() {
                     ["---"] => body = true,
-                    ["seed", s] => sc.seed = s.parse().map_err(|_| at(format!("bad seed {s:?}")))?,
+                    ["seed", s] => {
+                        sc.seed = s.parse().map_err(|_| at(format!("bad seed {s:?}")))?
+                    }
                     ["device", name, vol, off] => sc.devices.push(DeviceSpec {
                         name: name.to_string(),
-                        volume: Volume::from_code(vol).ok_or_else(|| at(format!("unknown volume {vol:?}")))?,
-                        utc_offset_secs: off.parse().map_err(|_| at(format!("bad offset {off:?}")))?,
+                        volume: Volume::from_code(vol)
+                            .ok_or_else(|| at(format!("unknown volume {vol:?}")))?,
+                        utc_offset_secs: off
+                            .parse()
+                            .map_err(|_| at(format!("bad offset {off:?}")))?,
                     }),
-                    ["mount", path, rest @ ..] => sc.mounts.push(parse_mount(path, rest).map_err(at)?),
+                    ["mount", path, rest @ ..] => {
+                        sc.mounts.push(parse_mount(path, rest).map_err(at)?)
+                    }
                     _ => return Err(at(format!("unexpected {line:?} before ---"))),
                 }
             } else {
@@ -381,7 +394,9 @@ fn parse_mount(path: &str, rest: &[&str]) -> Result<MountSpec, String> {
     };
     let mut seen = Vec::new();
     for kv in rest {
-        let (k, v) = kv.split_once('=').ok_or(format!("expected key=value, got {kv:?}"))?;
+        let (k, v) = kv
+            .split_once('=')
+            .ok_or(format!("expected key=value, got {kv:?}"))?;
         let flag = || match v {
             "yes" => Ok(true),
             "no" => Ok(false),
@@ -416,8 +431,12 @@ fn parse_op(w: &[&str], sc: &Scenario) -> Result<Op, String> {
         ["settle"] => Op::Settle,
         ["confirm", d] => Op::Confirm { device: device(d)? },
         ["admin", rest @ ..] => Op::Admin(match rest {
-            ["share-arrive", p] => AdminOp::ShareArrive { path: p.to_string() },
-            ["share-leave", p] => AdminOp::ShareLeave { path: p.to_string() },
+            ["share-arrive", p] => AdminOp::ShareArrive {
+                path: p.to_string(),
+            },
+            ["share-leave", p] => AdminOp::ShareLeave {
+                path: p.to_string(),
+            },
             ["restore"] => AdminOp::Restore,
             ["restart"] => AdminOp::Restart,
             ["cursor-expire"] => AdminOp::CursorExpire,
@@ -463,12 +482,16 @@ fn parse_op(w: &[&str], sc: &Scenario) -> Result<Op, String> {
                     path: p.to_string(),
                     content: c.to_string(),
                 },
-                ("mkdir", [p]) => Act::Mkdir { path: p.to_string() },
+                ("mkdir", [p]) => Act::Mkdir {
+                    path: p.to_string(),
+                },
                 ("rename", [a, b]) => Act::Rename {
                     from: a.to_string(),
                     to: b.to_string(),
                 },
-                ("delete", [p]) => Act::Delete { path: p.to_string() },
+                ("delete", [p]) => Act::Delete {
+                    path: p.to_string(),
+                },
                 ("copy", [a, b]) => Act::Copy {
                     from: a.to_string(),
                     to: b.to_string(),
@@ -477,7 +500,12 @@ fn parse_op(w: &[&str], sc: &Scenario) -> Result<Op, String> {
                     path: p.to_string(),
                     content: c.to_string(),
                 },
-                _ => return Err(format!("unknown act {verb:?} with {} arguments", args.len())),
+                _ => {
+                    return Err(format!(
+                        "unknown act {verb:?} with {} arguments",
+                        args.len()
+                    ));
+                }
             };
             Op::Person { side, act }
         }
@@ -509,8 +537,11 @@ fn split_words(line: &str) -> Result<Vec<String>, String> {
                                 return Err("expected { after \\u".into());
                             }
                             let hex: String = chars.by_ref().take_while(|c| *c != '}').collect();
-                            let code = u32::from_str_radix(&hex, 16).map_err(|_| format!("bad \\u{{{hex}}}"))?;
-                            word.push(char::from_u32(code).ok_or(format!("not a character: {hex}"))?);
+                            let code = u32::from_str_radix(&hex, 16)
+                                .map_err(|_| format!("bad \\u{{{hex}}}"))?;
+                            word.push(
+                                char::from_u32(code).ok_or(format!("not a character: {hex}"))?,
+                            );
                         }
                         other => return Err(format!("unknown escape {other:?}")),
                     },

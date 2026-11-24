@@ -25,7 +25,10 @@ pub const CLASH_PAIRS: &[(&str, &str)] = &[
     ("Report.pdf", "report.pdf"),
     ("README", "readme"),
     ("Stra\u{DF}e", "STRA\u{1E9E}E"),
-    ("\u{3A3}\u{3BF}\u{3C6}\u{3AF}\u{3B1}\u{3C2}", "\u{3C3}\u{3BF}\u{3C6}\u{3AF}\u{3B1}\u{3C3}"),
+    (
+        "\u{3A3}\u{3BF}\u{3C6}\u{3AF}\u{3B1}\u{3C2}",
+        "\u{3C3}\u{3BF}\u{3C6}\u{3AF}\u{3B1}\u{3C3}",
+    ),
     ("\u{212B}ngstr\u{F6}m", "\u{C5}ngstr\u{F6}m"),
     ("K\u{212A}", "kk"),
 ];
@@ -40,7 +43,10 @@ pub const NAMES: &[NastyName] = &[
     n("STRA\u{1E9E}E", "capital sharp s folds to sharp s"),
     n("\u{130}stanbul", "Turkish dotted capital I: no simple fold"),
     n("\u{131}zmir", "Turkish dotless i"),
-    n("\u{3C3}\u{3BF}\u{3C6}\u{3AF}\u{3B1}\u{3C2}", "Greek final sigma"),
+    n(
+        "\u{3C3}\u{3BF}\u{3C6}\u{3AF}\u{3B1}\u{3C2}",
+        "Greek final sigma",
+    ),
     n("a<b", "Windows refuses <"),
     n("a>b", "Windows refuses >"),
     n("time 10:30", "Windows refuses :, macOS shows it as /"),
@@ -52,7 +58,10 @@ pub const NAMES: &[NastyName] = &[
     n("trailing.", "trailing dot: Windows refuses"),
     n("trailing ", "trailing space: Windows refuses"),
     n("CON", "reserved device name"),
-    n("con.txt", "reserved device name before an extension, lower case"),
+    n(
+        "con.txt",
+        "reserved device name before an extension, lower case",
+    ),
     n("Nul.tar.gz", "reserved name, mixed case, two extensions"),
     n("COM1", "reserved COM"),
     n("LPT9.log", "reserved LPT with extension"),
@@ -71,9 +80,18 @@ pub const NAMES: &[NastyName] = &[
     n("back\\slash", "a backslash in a Linux name: Hearth refuses"),
     n(".hearthsync", "the engine's own folder name"),
     n("x.hearthtmp", "looks like the engine's temp file"),
-    n("Budget (conflict Lap, 2026-11-24 14.03.22).xlsx", "looks like a conflict copy"),
-    n("Budget (conflict Lap, 2026-11-24 14.03.22 2).xlsx", "looks like a numbered conflict copy"),
-    n("\u{E9}\u{301}", "a character Hearth's NFC and Apple's variant treat differently"),
+    n(
+        "Budget (conflict Lap, 2026-11-24 14.03.22).xlsx",
+        "looks like a conflict copy",
+    ),
+    n(
+        "Budget (conflict Lap, 2026-11-24 14.03.22 2).xlsx",
+        "looks like a numbered conflict copy",
+    ),
+    n(
+        "\u{E9}\u{301}",
+        "a character Hearth's NFC and Apple's variant treat differently",
+    ),
     n("\u{FB01}le", "ligature fi: no simple fold"),
     n("~$lock.docx", "an office lock file name"),
 ];
@@ -97,7 +115,13 @@ pub fn long_names() -> Vec<(String, &'static str)> {
     vec![
         (long_name('a', 250), "250 bytes: Hearth's limit"),
         (long_name('a', 251), "251 bytes: Hearth refuses"),
-        (long_name('\u{E9}', 254), "127 two-byte characters: 254 bytes, 127 UTF-16 units"),
-        (long_name('\u{1F600}', 248), "62 four-byte characters: 124 UTF-16 units"),
+        (
+            long_name('\u{E9}', 254),
+            "127 two-byte characters: 254 bytes, 127 UTF-16 units",
+        ),
+        (
+            long_name('\u{1F600}', 248),
+            "62 four-byte characters: 124 UTF-16 units",
+        ),
     ]
 }

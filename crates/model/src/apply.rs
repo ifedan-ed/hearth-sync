@@ -37,13 +37,22 @@ impl Namespace {
     fn stored(self, name: &str) -> Option<String> {
         match self {
             Namespace::Device(v) => {
-                if name.is_empty() || name.contains('/') || name == "." || name == ".." || name.contains('\0') {
+                if name.is_empty()
+                    || name.contains('/')
+                    || name == "."
+                    || name == ".."
+                    || name.contains('\0')
+                {
                     return None;
                 }
                 if device_refuses(v, &nfc(name)).is_some() {
                     return None;
                 }
-                Some(if v == Volume::HfsPlus { nfd(name) } else { name.to_string() })
+                Some(if v == Volume::HfsPlus {
+                    nfd(name)
+                } else {
+                    name.to_string()
+                })
             }
             Namespace::Hearth => {
                 let n = nfc(name);
@@ -95,7 +104,13 @@ fn taken(tree: &IdTree, ns: Namespace, folder: NodeId, name: &str, except: Optio
 
 /// Applies `act` to `tree`. `mtime` is the time written on a new content,
 /// `next_id` the source of new ids. Returns whether the act happened.
-pub fn apply_act(tree: &mut IdTree, ns: Namespace, act: &Act, mtime: i64, next_id: &mut NodeId) -> bool {
+pub fn apply_act(
+    tree: &mut IdTree,
+    ns: Namespace,
+    act: &Act,
+    mtime: i64,
+    next_id: &mut NodeId,
+) -> bool {
     let mut fresh = || {
         let id = *next_id;
         *next_id += 1;
@@ -110,7 +125,9 @@ pub fn apply_act(tree: &mut IdTree, ns: Namespace, act: &Act, mtime: i64, next_i
             let Some((parent, name)) = parent_of(tree, ns, path) else {
                 return false;
             };
-            let Some(stored) = ns.stored(&name) else { return false };
+            let Some(stored) = ns.stored(&name) else {
+                return false;
+            };
             if taken(tree, ns, parent, &stored, None) {
                 return false;
             }
@@ -121,7 +138,9 @@ pub fn apply_act(tree: &mut IdTree, ns: Namespace, act: &Act, mtime: i64, next_i
             let Some((parent, name)) = parent_of(tree, ns, path) else {
                 return false;
             };
-            let Some(stored) = ns.stored(&name) else { return false };
+            let Some(stored) = ns.stored(&name) else {
+                return false;
+            };
             if taken(tree, ns, parent, &stored, None) {
                 return false;
             }
@@ -129,7 +148,9 @@ pub fn apply_act(tree: &mut IdTree, ns: Namespace, act: &Act, mtime: i64, next_i
             true
         }
         Act::Edit { path, content } => {
-            let Some(id) = lookup(tree, ns, path) else { return false };
+            let Some(id) = lookup(tree, ns, path) else {
+                return false;
+            };
             match tree.nodes.get_mut(&id) {
                 Some(n) if !n.kind.is_folder() => {
                     n.kind = file(content);
@@ -139,14 +160,18 @@ pub fn apply_act(tree: &mut IdTree, ns: Namespace, act: &Act, mtime: i64, next_i
             }
         }
         Act::Rename { from, to } => {
-            let Some(id) = lookup(tree, ns, from) else { return false };
+            let Some(id) = lookup(tree, ns, from) else {
+                return false;
+            };
             if id == ROOT {
                 return false;
             }
             let Some((parent, name)) = parent_of(tree, ns, to) else {
                 return false;
             };
-            let Some(stored) = ns.stored(&name) else { return false };
+            let Some(stored) = ns.stored(&name) else {
+                return false;
+            };
             // Not into itself or below itself.
             if tree.subtree(id).contains(&parent) {
                 return false;
@@ -164,7 +189,9 @@ pub fn apply_act(tree: &mut IdTree, ns: Namespace, act: &Act, mtime: i64, next_i
             }
         }
         Act::Delete { path } => {
-            let Some(id) = lookup(tree, ns, path) else { return false };
+            let Some(id) = lookup(tree, ns, path) else {
+                return false;
+            };
             if id == ROOT {
                 return false;
             }
@@ -174,14 +201,18 @@ pub fn apply_act(tree: &mut IdTree, ns: Namespace, act: &Act, mtime: i64, next_i
             true
         }
         Act::Copy { from, to } => {
-            let Some(src) = lookup(tree, ns, from) else { return false };
+            let Some(src) = lookup(tree, ns, from) else {
+                return false;
+            };
             let Some(hash) = tree.get(src).and_then(|n| n.kind.hash().cloned()) else {
                 return false;
             };
             let Some((parent, name)) = parent_of(tree, ns, to) else {
                 return false;
             };
-            let Some(stored) = ns.stored(&name) else { return false };
+            let Some(stored) = ns.stored(&name) else {
+                return false;
+            };
             if taken(tree, ns, parent, &stored, None) {
                 return false;
             }
@@ -189,12 +220,20 @@ pub fn apply_act(tree: &mut IdTree, ns: Namespace, act: &Act, mtime: i64, next_i
             true
         }
         Act::Retype { path, content } => {
-            let Some(id) = lookup(tree, ns, path) else { return false };
-            let Some(node) = tree.get(id).cloned() else { return false };
+            let Some(id) = lookup(tree, ns, path) else {
+                return false;
+            };
+            let Some(node) = tree.get(id).cloned() else {
+                return false;
+            };
             for gone in tree.subtree(id) {
                 tree.nodes.remove(&gone);
             }
-            let kind = if node.kind.is_folder() { file(content) } else { Kind::Folder };
+            let kind = if node.kind.is_folder() {
+                file(content)
+            } else {
+                Kind::Folder
+            };
             tree.insert(fresh(), node.parent, &node.name, kind);
             true
         }
@@ -215,7 +254,13 @@ mod tests {
             content: "c1".into(),
         };
         assert!(apply_act(&mut t, ntfs, &create("Report.pdf"), 0, &mut next));
-        assert!(!apply_act(&mut t, ntfs, &create("report.pdf"), 0, &mut next));
+        assert!(!apply_act(
+            &mut t,
+            ntfs,
+            &create("report.pdf"),
+            0,
+            &mut next
+        ));
         assert!(!apply_act(&mut t, ntfs, &create("con.txt"), 0, &mut next));
         // A case-only rename is a rename.
         let rename = Act::Rename {
@@ -226,10 +271,34 @@ mod tests {
         assert_eq!(t.get(1).map(|n| n.name.as_str()), Some("REPORT.pdf"));
 
         let mut h = IdTree::new();
-        assert!(apply_act(&mut h, Namespace::Hearth, &create("Report.pdf"), 0, &mut next));
-        assert!(apply_act(&mut h, Namespace::Hearth, &create("report.pdf"), 0, &mut next));
-        assert!(apply_act(&mut h, Namespace::Hearth, &create("con.txt"), 0, &mut next));
-        assert!(!apply_act(&mut h, Namespace::Hearth, &create(".htaccess"), 0, &mut next));
+        assert!(apply_act(
+            &mut h,
+            Namespace::Hearth,
+            &create("Report.pdf"),
+            0,
+            &mut next
+        ));
+        assert!(apply_act(
+            &mut h,
+            Namespace::Hearth,
+            &create("report.pdf"),
+            0,
+            &mut next
+        ));
+        assert!(apply_act(
+            &mut h,
+            Namespace::Hearth,
+            &create("con.txt"),
+            0,
+            &mut next
+        ));
+        assert!(!apply_act(
+            &mut h,
+            Namespace::Hearth,
+            &create(".htaccess"),
+            0,
+            &mut next
+        ));
     }
 
     #[test]
@@ -240,9 +309,21 @@ mod tests {
             path: "Caf\u{E9}".into(),
             content: "c".into(),
         };
-        assert!(apply_act(&mut t, Namespace::Device(Volume::HfsPlus), &act, 0, &mut next));
-        assert_eq!(t.get(1).map(|n| n.name.clone()), Some("Cafe\u{301}".to_string()));
-        assert_eq!(lookup(&t, Namespace::Device(Volume::HfsPlus), "caf\u{E9}"), Some(1));
+        assert!(apply_act(
+            &mut t,
+            Namespace::Device(Volume::HfsPlus),
+            &act,
+            0,
+            &mut next
+        ));
+        assert_eq!(
+            t.get(1).map(|n| n.name.clone()),
+            Some("Cafe\u{301}".to_string())
+        );
+        assert_eq!(
+            lookup(&t, Namespace::Device(Volume::HfsPlus), "caf\u{E9}"),
+            Some(1)
+        );
     }
 
     #[test]
@@ -250,8 +331,20 @@ mod tests {
         let mut t = IdTree::new();
         let mut next = 1;
         let ns = Namespace::Hearth;
-        assert!(apply_act(&mut t, ns, &Act::Mkdir { path: "a".into() }, 0, &mut next));
-        assert!(apply_act(&mut t, ns, &Act::Mkdir { path: "a/b".into() }, 0, &mut next));
+        assert!(apply_act(
+            &mut t,
+            ns,
+            &Act::Mkdir { path: "a".into() },
+            0,
+            &mut next
+        ));
+        assert!(apply_act(
+            &mut t,
+            ns,
+            &Act::Mkdir { path: "a/b".into() },
+            0,
+            &mut next
+        ));
         let into = Act::Rename {
             from: "a".into(),
             to: "a/b/a".into(),

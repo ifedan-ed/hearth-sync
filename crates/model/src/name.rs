@@ -166,7 +166,10 @@ impl Volume {
     /// Whether a name's length is counted in UTF-16 units (else in UTF-8
     /// bytes); the limit is 255 either way (sync.md 3.8 "Long paths").
     fn counts_utf16(self) -> bool {
-        matches!(self, Volume::Apfs | Volume::HfsPlus | Volume::Ntfs | Volume::Fat)
+        matches!(
+            self,
+            Volume::Apfs | Volume::HfsPlus | Volume::Ntfs | Volume::Fat
+        )
     }
 }
 
@@ -206,10 +209,9 @@ impl DeviceRefusal {
 /// is the NFC form (3.8: "Locally the engine writes the NFC form").
 pub fn device_refuses(volume: Volume, name: &str) -> Option<DeviceRefusal> {
     if volume.windows_names() {
-        if name
-            .chars()
-            .any(|c| matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') || (c as u32) <= 0x1F)
-        {
+        if name.chars().any(|c| {
+            matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') || (c as u32) <= 0x1F
+        }) {
             return Some(DeviceRefusal::WindowsCharacter);
         }
         if name.ends_with('.') || name.ends_with(' ') {
@@ -272,17 +274,17 @@ pub fn name_key(volume: Volume, name: &str) -> String {
 /// fold and stays as it is.
 fn simple_fold(c: char) -> char {
     match c {
-        '\u{3C2}' => '\u{3C3}',             // final sigma -> sigma
-        '\u{17F}' => 's',                   // long s
+        '\u{3C2}' => '\u{3C3}',              // final sigma -> sigma
+        '\u{17F}' => 's',                    // long s
         '\u{345}' | '\u{1FBE}' => '\u{3B9}', // ypogegrammeni, prosgegrammeni -> iota
-        '\u{3D0}' => '\u{3B2}',             // beta symbol
-        '\u{3D1}' => '\u{3B8}',             // theta symbol
-        '\u{3D5}' => '\u{3C6}',             // phi symbol
-        '\u{3D6}' => '\u{3C0}',             // pi symbol
-        '\u{3F0}' => '\u{3BA}',             // kappa symbol
-        '\u{3F1}' => '\u{3C1}',             // rho symbol
-        '\u{3F5}' => '\u{3B5}',             // lunate epsilon
-        '\u{1E9B}' => '\u{1E61}',           // long s with dot above
+        '\u{3D0}' => '\u{3B2}',              // beta symbol
+        '\u{3D1}' => '\u{3B8}',              // theta symbol
+        '\u{3D5}' => '\u{3C6}',              // phi symbol
+        '\u{3D6}' => '\u{3C0}',              // pi symbol
+        '\u{3F0}' => '\u{3BA}',              // kappa symbol
+        '\u{3F1}' => '\u{3C1}',              // rho symbol
+        '\u{3F5}' => '\u{3B5}',              // lunate epsilon
+        '\u{1E9B}' => '\u{1E61}',            // long s with dot above
         // Cherokee folds to upper case (the one script that does).
         '\u{13F8}'..='\u{13FD}' => char::from_u32(c as u32 - 8).unwrap_or(c),
         '\u{AB70}'..='\u{ABBF}' => char::from_u32(c as u32 - 0xAB70 + 0x13A0).unwrap_or(c),
@@ -297,11 +299,14 @@ fn simple_fold(c: char) -> char {
     }
 }
 
-/// Whether the engine keeps `name` for itself at a sync root and never
-/// syncs a remote entry so named there (sync-api 13, "The engine's own
-/// names"; sync.md 3.7): `.hearthsync`, and anything ending `.hearthtmp`.
-pub fn is_engine_name(name: &str) -> bool {
-    name == ".hearthsync" || name.ends_with(".hearthtmp")
+/// Whether the engine keeps `name` for itself in a folder (`at_root`:
+/// the sync root itself) and never syncs an entry so named there
+/// (sync-api 13, "The engine's own names"; sync.md 3.7): `.hearthsync` at
+/// the root, and anything ending `.hearthtmp` in any folder, since the
+/// engine's temporary files sit beside their targets wherever those are
+/// (docs/contract-questions.md Q14).
+pub fn is_engine_name(name: &str, at_root: bool) -> bool {
+    (at_root && name == ".hearthsync") || name.ends_with(".hearthtmp")
 }
 
 /// A name split into stem and extension for a conflict copy. The
@@ -404,9 +409,19 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 /// `max_bytes` is the tighter of Hearth's 250 bytes and the device's own
 /// limit; the model passes Hearth's, because a copy is uploaded and must
 /// be a name Hearth keeps (I9: copies sync as ordinary files).
-pub fn conflict_name(original: &str, device: &str, stamp: Stamp, n: u32, max_bytes: usize) -> String {
+pub fn conflict_name(
+    original: &str,
+    device: &str,
+    stamp: Stamp,
+    n: u32,
+    max_bytes: usize,
+) -> String {
     let (stem, ext) = split_extension(original);
-    let number = if n >= 2 { format!(" {n}") } else { String::new() };
+    let number = if n >= 2 {
+        format!(" {n}")
+    } else {
+        String::new()
+    };
     let marker = format!(
         " (conflict {}, {}{})",
         conflict_device_label(device),
@@ -493,7 +508,9 @@ pub fn is_conflict_copy_of(copy: &str, original: &str, device: &str) -> bool {
         return false;
     };
     let (stem, ext) = split_extension(original);
-    parsed.ext == ext && stem.starts_with(&parsed.stem) && parsed.device == conflict_device_label(device)
+    parsed.ext == ext
+        && stem.starts_with(&parsed.stem)
+        && parsed.device == conflict_device_label(device)
 }
 
 #[cfg(test)]
@@ -505,14 +522,19 @@ mod tests {
         assert_eq!(hearth_refuses("a\u{301}"), Some(HearthRefusal::NotNfc));
         assert_eq!(hearth_refuses(""), Some(HearthRefusal::Empty));
         assert_eq!(hearth_refuses(".."), Some(HearthRefusal::Dot));
-        assert_eq!(hearth_refuses(&"x".repeat(251)), Some(HearthRefusal::TooLong));
+        assert_eq!(
+            hearth_refuses(&"x".repeat(251)),
+            Some(HearthRefusal::TooLong)
+        );
         assert_eq!(hearth_refuses(&"x".repeat(250)), None);
         assert_eq!(hearth_refuses("a\\b"), Some(HearthRefusal::Separator));
         assert_eq!(hearth_refuses("a\u{7F}"), Some(HearthRefusal::Control));
         assert_eq!(hearth_refuses("   "), Some(HearthRefusal::Blank));
         assert_eq!(hearth_refuses(".HTaccess"), Some(HearthRefusal::Reserved));
         // Accepted as sent (sync-api 13, "Everything else").
-        for ok in ["CON", "a:b", "trail. ", " lead", "-x", ".hidden", "\u{200B}"] {
+        for ok in [
+            "CON", "a:b", "trail. ", " lead", "-x", ".hidden", "\u{200B}",
+        ] {
             assert_eq!(hearth_refuses(ok), None, "{ok:?}");
         }
     }
@@ -520,26 +542,59 @@ mod tests {
     #[test]
     fn windows_rules() {
         let v = Volume::Ntfs;
-        assert_eq!(device_refuses(v, "a:b"), Some(DeviceRefusal::WindowsCharacter));
-        assert_eq!(device_refuses(v, "a."), Some(DeviceRefusal::WindowsTrailing));
-        assert_eq!(device_refuses(v, "a "), Some(DeviceRefusal::WindowsTrailing));
-        assert_eq!(device_refuses(v, "con.txt"), Some(DeviceRefusal::WindowsReserved));
-        assert_eq!(device_refuses(v, "COM\u{B9}"), Some(DeviceRefusal::WindowsReserved));
+        assert_eq!(
+            device_refuses(v, "a:b"),
+            Some(DeviceRefusal::WindowsCharacter)
+        );
+        assert_eq!(
+            device_refuses(v, "a."),
+            Some(DeviceRefusal::WindowsTrailing)
+        );
+        assert_eq!(
+            device_refuses(v, "a "),
+            Some(DeviceRefusal::WindowsTrailing)
+        );
+        assert_eq!(
+            device_refuses(v, "con.txt"),
+            Some(DeviceRefusal::WindowsReserved)
+        );
+        assert_eq!(
+            device_refuses(v, "COM\u{B9}"),
+            Some(DeviceRefusal::WindowsReserved)
+        );
         assert_eq!(device_refuses(v, "COM10"), None);
         assert_eq!(device_refuses(v, "CONSOLE"), None);
         assert_eq!(device_refuses(Volume::Ext4, "a:b"), None);
-        assert_eq!(device_refuses(Volume::Ext4, &"é".repeat(128)), Some(DeviceRefusal::TooLong));
+        assert_eq!(
+            device_refuses(Volume::Ext4, &"é".repeat(128)),
+            Some(DeviceRefusal::TooLong)
+        );
         assert_eq!(device_refuses(Volume::Apfs, &"é".repeat(128)), None);
     }
 
     #[test]
     fn keys() {
-        assert_eq!(name_key(Volume::Apfs, "Report.PDF"), name_key(Volume::Apfs, "report.pdf"));
-        assert_ne!(name_key(Volume::Ext4, "Report.pdf"), name_key(Volume::Ext4, "report.pdf"));
-        assert_eq!(name_key(Volume::Ext4, "e\u{301}"), name_key(Volume::Ext4, "\u{E9}"));
-        assert_eq!(name_key(Volume::Ntfs, "\u{3A3}"), name_key(Volume::Ntfs, "\u{3C2}"));
+        assert_eq!(
+            name_key(Volume::Apfs, "Report.PDF"),
+            name_key(Volume::Apfs, "report.pdf")
+        );
+        assert_ne!(
+            name_key(Volume::Ext4, "Report.pdf"),
+            name_key(Volume::Ext4, "report.pdf")
+        );
+        assert_eq!(
+            name_key(Volume::Ext4, "e\u{301}"),
+            name_key(Volume::Ext4, "\u{E9}")
+        );
+        assert_eq!(
+            name_key(Volume::Ntfs, "\u{3A3}"),
+            name_key(Volume::Ntfs, "\u{3C2}")
+        );
         // Turkish dotted capital I has no simple fold.
-        assert_ne!(name_key(Volume::Ntfs, "\u{130}"), name_key(Volume::Ntfs, "i"));
+        assert_ne!(
+            name_key(Volume::Ntfs, "\u{130}"),
+            name_key(Volume::Ntfs, "i")
+        );
     }
 
     #[test]
@@ -547,16 +602,26 @@ mod tests {
         let stamp = Stamp::local(1_795_615_402_000_000, 3600);
         assert_eq!(stamp.text(), "2026-11-25 15.03.22");
         let name = conflict_name("Budget.xlsx", "Daniels-Laptop", stamp, 1, 250);
-        assert_eq!(name, "Budget (conflict Daniels-Laptop, 2026-11-25 15.03.22).xlsx");
+        assert_eq!(
+            name,
+            "Budget (conflict Daniels-Laptop, 2026-11-25 15.03.22).xlsx"
+        );
         let parsed = parse_conflict_name(&name).expect("parses");
-        assert_eq!((parsed.stem.as_str(), parsed.ext.as_str(), parsed.n), ("Budget", ".xlsx", 1));
+        assert_eq!(
+            (parsed.stem.as_str(), parsed.ext.as_str(), parsed.n),
+            ("Budget", ".xlsx", 1)
+        );
         let second = conflict_name("Budget.xlsx", "Daniels-Laptop", stamp, 2, 250);
         assert!(second.ends_with(" 2).xlsx"));
         assert_eq!(parse_conflict_name(&second).map(|p| p.n), Some(2));
         let long = conflict_name(&format!("{}.txt", "a".repeat(240)), "D", stamp, 1, 250);
         assert_eq!(long.len(), 250);
         assert!(long.ends_with(").txt"));
-        assert!(is_conflict_copy_of(&long, &format!("{}.txt", "a".repeat(240)), "D"));
+        assert!(is_conflict_copy_of(
+            &long,
+            &format!("{}.txt", "a".repeat(240)),
+            "D"
+        ));
         assert_eq!(parse_conflict_name("plain.txt"), None);
     }
 
@@ -571,6 +636,9 @@ mod tests {
     fn dates() {
         assert_eq!(Stamp::local(0, 0).text(), "1970-01-01 00.00.00");
         assert_eq!(Stamp::local(-1_000_000, 0).text(), "1969-12-31 23.59.59");
-        assert_eq!(Stamp::local(951_782_400_000_000, 0).text(), "2000-02-29 00.00.00");
+        assert_eq!(
+            Stamp::local(951_782_400_000_000, 0).text(),
+            "2000-02-29 00.00.00"
+        );
     }
 }

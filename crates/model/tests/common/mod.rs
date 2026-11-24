@@ -21,17 +21,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use hearth_sync_model::apply::{Namespace, apply_act, lookup};
 use hearth_sync_model::name::nfc;
-use hearth_sync_model::reconcile::{CopyReason, DeviceContext, Listing, MountRule, Settled, perms, reconcile};
+use hearth_sync_model::reconcile::{
+    CopyReason, DeviceContext, Listing, MountRule, Settled, perms, reconcile,
+};
 use hearth_sync_model::scenario::{Act, AdminOp, FaultOp, Op, Scenario, Side};
 use hearth_sync_model::trace::{
-    Condition, DeviceView, EngineAction, Event, MountView, Outcome, Request, RequestKind, RootState, ServerView, Snapshot,
-    Step, Trace, Write, WriteOp,
+    Condition, DeviceView, EngineAction, Event, MountView, Outcome, Request, RequestKind,
+    RootState, ServerView, Snapshot, Step, Trace, Write, WriteOp,
 };
 use hearth_sync_model::tree::{Hash, IdTree, Kind, Node, NodeId, PathTree, ROOT, is_within};
 
 /// One deliberate defect each, named for the guarantee it breaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mutant {
+pub(crate) enum Mutant {
     /// No defect.
     None,
     /// I1: removes and replaces local files without holding them.
@@ -129,7 +131,7 @@ struct World {
 
 /// Plays `sc` with the naive sync (with `mutant`'s defect) and returns
 /// the trace.
-pub fn run(sc: &Scenario, mutant: Mutant) -> Trace {
+pub(crate) fn run(sc: &Scenario, mutant: Mutant) -> Trace {
     let mut w = World {
         sc: sc.clone(),
         mutant,
@@ -198,6 +200,7 @@ pub fn run(sc: &Scenario, mutant: Mutant) -> Trace {
             },
         );
     }
+    w.backup = (w.server.clone(), BTreeSet::new(), BTreeSet::new());
     w.trace.start = w.snapshot();
     if mutant == Mutant::NondeterministicLog {
         let n = RUNS.fetch_add(1, Ordering::SeqCst);
@@ -212,7 +215,13 @@ pub fn run(sc: &Scenario, mutant: Mutant) -> Trace {
 impl World {
     fn make_mount_folder(&mut self, path: &str) {
         let mut next = self.next_id;
-        apply_act(&mut self.server, Namespace::Hearth, &Act::Mkdir { path: path.into() }, self.time, &mut next);
+        apply_act(
+            &mut self.server,
+            Namespace::Hearth,
+            &Act::Mkdir { path: path.into() },
+            self.time,
+            &mut next,
+        );
         self.next_id = next;
     }
 
@@ -240,7 +249,11 @@ impl World {
             .devs
             .iter()
             .map(|(name, d)| {
-                let tree = if d.root == RootState::Present { d.tree.to_paths() } else { PathTree::new() };
+                let tree = if d.root == RootState::Present {
+                    d.tree.to_paths()
+                } else {
+                    PathTree::new()
+                };
                 (
                     name.clone(),
                     DeviceView {
@@ -270,7 +283,9 @@ impl World {
 
     fn record(&mut self, event: Event) {
         self.time += 1_000_000;
-        self.trace.log.push(format!("{} {:?}", self.trace.steps.len(), event));
+        self.trace
+            .log
+            .push(format!("{} {:?}", self.trace.steps.len(), event));
         let after = self.snapshot();
         self.trace.steps.push(Step { event, after });
     }
@@ -288,7 +303,10 @@ impl World {
 
     /// The mount holding server path `path`.
     fn mount_at(&self, path: &str) -> Option<&Mount> {
-        self.mounts.iter().filter(|m| m.present && is_within(path, &m.path)).max_by_key(|m| m.path.len())
+        self.mounts
+            .iter()
+            .filter(|m| m.present && is_within(path, &m.path))
+            .max_by_key(|m| m.path.len())
     }
 
     fn keeps_trash(&self, path: &str) -> bool {
@@ -317,7 +335,9 @@ impl World {
                     }
                     d.paused = None;
                 }
-                self.record(Event::Confirm { device: device.clone() });
+                self.record(Event::Confirm {
+                    device: device.clone(),
+                });
                 self.sync_all();
             }
             Op::Settle => self.settle(),
@@ -333,7 +353,13 @@ impl World {
                 let applied = match self.devs.get_mut(name) {
                     Some(d) if d.root == RootState::Present => {
                         let mtime = time + d.skew * 1_000_000;
-                        apply_act(&mut d.tree, Namespace::Device(d.ctx.volume), act, mtime, &mut next)
+                        apply_act(
+                            &mut d.tree,
+                            Namespace::Device(d.ctx.volume),
+                            act,
+                            mtime,
+                            &mut next,
+                        )
                     }
                     _ => false,
                 };
@@ -353,7 +379,13 @@ impl World {
     fn web_act(&mut self, act: &Act) -> bool {
         let before = self.server.to_paths();
         let mut next = self.next_id;
-        let applied = apply_act(&mut self.server, Namespace::Hearth, act, self.time, &mut next);
+        let applied = apply_act(
+            &mut self.server,
+            Namespace::Hearth,
+            act,
+            self.time,
+            &mut next,
+        );
         self.next_id = next;
         if applied {
             self.keep_displaced(&before);
@@ -389,7 +421,11 @@ impl World {
     fn admin(&mut self, a: &AdminOp) {
         match a {
             AdminOp::ShareArrive { path } => {
-                if let Some(i) = self.mounts.iter().position(|m| m.path == *path && !m.present) {
+                if let Some(i) = self
+                    .mounts
+                    .iter()
+                    .position(|m| m.path == *path && !m.present)
+                {
                     self.mounts[i].present = true;
                     match self.mounts[i].hidden.take() {
                         Some(sub) => self.server.nodes.extend(sub.nodes),
@@ -398,7 +434,11 @@ impl World {
                 }
             }
             AdminOp::ShareLeave { path } => {
-                if let Some(i) = self.mounts.iter().position(|m| m.path == *path && m.present) {
+                if let Some(i) = self
+                    .mounts
+                    .iter()
+                    .position(|m| m.path == *path && m.present)
+                {
                     let root = lookup(&self.server, Namespace::Hearth, path);
                     let mut hidden = IdTree::new();
                     if let Some(root) = root {
@@ -441,7 +481,9 @@ impl World {
     /// changes not uploaded stay in "<name> (no longer shared)", listed
     /// (sync.md 4.2).
     fn share_left_on(&mut self, name: &str, root: NodeId, path: &str) {
-        let Some(d) = self.devs.get_mut(name) else { return };
+        let Some(d) = self.devs.get_mut(name) else {
+            return;
+        };
         if !d.tree.has(root) {
             return;
         }
@@ -450,11 +492,16 @@ impl World {
         self.next_id += 1;
         let mut kept_any = false;
         for id in d.tree.subtree(root) {
-            let Some(node) = d.tree.get(id).cloned() else { continue };
+            let Some(node) = d.tree.get(id).cloned() else {
+                continue;
+            };
             if id == root {
                 continue;
             }
-            let unchanged = d.base.get(id).is_some_and(|b| b.kind.same_content(&node.kind));
+            let unchanged = d
+                .base
+                .get(id)
+                .is_some_and(|b| b.kind.same_content(&node.kind));
             if node.kind.is_folder() {
                 continue;
             }
@@ -466,6 +513,7 @@ impl World {
                 d.local_only.insert(id);
                 kept_any = true;
                 d.tree.insert(id, kept_id, &node.name, node.kind.clone());
+                d.base.nodes.remove(&id);
             }
         }
         for id in d.tree.subtree(root) {
@@ -541,7 +589,12 @@ impl World {
         self.record(Event::Settled);
         for name in &names {
             if self.mutant == Mutant::SyncLoop {
-                let file = self.server.to_paths().entries.into_iter().find_map(|(p, k)| k.hash().map(|h| (p, h.clone())));
+                let file = self
+                    .server
+                    .to_paths()
+                    .entries
+                    .into_iter()
+                    .find_map(|(p, k)| k.hash().map(|h| (p, h.clone())));
                 if let Some((path, hash)) = file {
                     self.request(name, RequestKind::Upload { path, hash }, Outcome::Done);
                 }
@@ -553,7 +606,11 @@ impl World {
             d.after_crash = false;
             d.after_db_loss = false;
         }
-        self.backup = (self.server.clone(), self.versions.clone(), self.trash.clone());
+        self.backup = (
+            self.server.clone(),
+            self.versions.clone(),
+            self.trash.clone(),
+        );
     }
 
     /// Every online device syncs, round after round, until a round
@@ -578,7 +635,10 @@ impl World {
             .iter()
             .filter(|m| m.present)
             .filter_map(|m| {
-                lookup(&self.server, Namespace::Hearth, &m.path).map(|root| MountRule { root, perms: m.perms })
+                lookup(&self.server, Namespace::Hearth, &m.path).map(|root| MountRule {
+                    root,
+                    perms: m.perms,
+                })
             })
             .collect();
         ctx
@@ -586,9 +646,15 @@ impl World {
 
     /// One sync round of one device. Returns whether it changed anything.
     fn sync_device(&mut self, name: &str) -> bool {
-        let Some(dev) = self.devs.get(name).cloned() else { return false };
-        let missing_root_sync = dev.root == RootState::Missing && self.mutant == Mutant::DeleteOnMissingRoot;
-        if !dev.online || dev.paused.is_some() || (dev.root != RootState::Present && !missing_root_sync) {
+        let Some(dev) = self.devs.get(name).cloned() else {
+            return false;
+        };
+        let missing_root_sync =
+            dev.root == RootState::Missing && self.mutant == Mutant::DeleteOnMissingRoot;
+        if !dev.online
+            || dev.paused.is_some()
+            || (dev.root != RootState::Present && !missing_root_sync)
+        {
             return false;
         }
         // The feed: the device learns Hearth's present state.
@@ -612,9 +678,28 @@ impl World {
         self.mutate(&dev, &mut s);
         let mut listed: BTreeMap<String, String> = BTreeMap::new();
         for (id, why) in &s.listed {
-            let path = s.device.path(*id).or_else(|| s.server.path(*id)).map(|p| p.join("/"));
-            if let Some(p) = path {
-                listed.insert(p, why.code());
+            let device_path = s.device.path(*id).map(|p| p.join("/"));
+            let server_path = s.server.path(*id).map(|p| p.join("/"));
+            match (why, device_path, server_path) {
+                // Hearth renamed it to a name this device cannot hold: the
+                // Hearth item is listed with the reason, the local copy
+                // left where it was (contract-questions Q10).
+                (Listing::DeviceRefused(_) | Listing::EngineName, Some(d), Some(h))
+                    if nfc(&d) != h =>
+                {
+                    listed.insert(h, why.code());
+                    listed.insert(d, "other_name".into());
+                }
+                (Listing::HearthRefused(_), Some(d), Some(h)) if nfc(&d) != h => {
+                    listed.insert(d, why.code());
+                    listed.insert(h, "other_name".into());
+                }
+                // Covered by its folder's listing.
+                (Listing::InsideListed, _, _) => {}
+                (_, Some(p), _) | (_, None, Some(p)) => {
+                    listed.insert(p, why.code());
+                }
+                _ => {}
             }
         }
         self.hold_back(&dev, &mut s, &mut listed);
@@ -656,9 +741,28 @@ impl World {
             self.request(name, RequestKind::Changes, Outcome::Failed);
             return true;
         }
-        let uploads = self.push_to_server(name, &dev, &s);
+        if dev.disk_full_next {
+            // The disk refuses the round's first write: nothing done.
+            if let Some(d) = self.devs.get_mut(name) {
+                d.disk_full_next = false;
+            }
+            self.engine(name, EngineAction::Note("disk full".into()));
+            return true;
+        }
+        // The round's listings are known before it acts.
+        if let Some(d) = self.devs.get_mut(name) {
+            d.listed = listed;
+        }
+        let uploads = self.push_to_server(name, &s);
+        self.pull_to_device(name, &dev, &s);
+        if let Some(d) = self.devs.get_mut(name) {
+            d.base = s.base.clone();
+            d.remote_view = self.server.to_paths();
+        }
         if dev.crash_next_round {
-            // Killed after the requests, before the disk and the commit.
+            // Killed right after the round's commit; the next start finds
+            // everything done (a crash anywhere else is the simulator's
+            // business: this stand-in only needs one for its mutant).
             if let Some(d) = self.devs.get_mut(name) {
                 d.crash_next_round = false;
                 d.after_crash = true;
@@ -669,20 +773,6 @@ impl World {
                     self.request(name, RequestKind::Upload { path, hash }, Outcome::Done);
                 }
             }
-            return true;
-        }
-        if dev.disk_full_next {
-            if let Some(d) = self.devs.get_mut(name) {
-                d.disk_full_next = false;
-            }
-            self.engine(name, EngineAction::Note("disk full".into()));
-            return true;
-        }
-        self.pull_to_device(name, &dev, &s);
-        if let Some(d) = self.devs.get_mut(name) {
-            d.base = s.base.clone();
-            d.listed = listed;
-            d.remote_view = self.server.to_paths();
         }
         if self.mutant == Mutant::PurgeHoldingEarly {
             if let Some(d) = self.devs.get_mut(name) {
@@ -774,8 +864,15 @@ impl World {
                         && was_listed
                         && let Some(n) = s.device.get(id).cloned()
                     {
-                        let clean: String = n.name.chars().map(|c| if c == '\\' || c.is_control() { '_' } else { c }).collect();
-                        let clean = if clean.trim().is_empty() || clean.eq_ignore_ascii_case(".htaccess") || clean.eq_ignore_ascii_case(".part") {
+                        let clean: String = n
+                            .name
+                            .chars()
+                            .map(|c| if c == '\\' || c.is_control() { '_' } else { c })
+                            .collect();
+                        let clean = if clean.trim().is_empty()
+                            || clean.eq_ignore_ascii_case(".htaccess")
+                            || clean.eq_ignore_ascii_case(".part")
+                        {
                             format!("_{clean}")
                         } else {
                             clean
@@ -795,12 +892,25 @@ impl World {
     /// Items under a path Hearth refuses or the device may not touch keep
     /// their state on both sides and are listed (I10).
     fn hold_back(&self, dev: &Dev, s: &mut Settled, listed: &mut BTreeMap<String, String>) {
-        let mut blocked: Vec<(String, String)> = self.refused.iter().map(|(p, c)| (p.clone(), format!("refused:{c}"))).collect();
+        let mut blocked: Vec<(String, String)> = self
+            .refused
+            .iter()
+            .map(|(p, c)| (p.clone(), format!("refused:{c}")))
+            .collect();
         blocked.extend(dev.denied.iter().map(|p| (p.clone(), "denied".to_string())));
         if blocked.is_empty() {
             return;
         }
-        let ids: BTreeSet<NodeId> = s.server.nodes.keys().chain(self.server.nodes.keys()).chain(s.device.nodes.keys()).chain(dev.tree.nodes.keys()).copied().collect();
+        let ids: BTreeSet<NodeId> = s
+            .server
+            .nodes
+            .keys()
+            .chain(self.server.nodes.keys())
+            .chain(s.device.nodes.keys())
+            .chain(dev.tree.nodes.keys())
+            .copied()
+            .collect();
+        let mut blocked_nodes: Vec<NodeId> = Vec::new();
         for id in ids {
             let paths: Vec<String> = [
                 self.server.path(id),
@@ -812,12 +922,27 @@ impl World {
             .flatten()
             .map(|p| nfc(&p.join("/")))
             .collect();
-            let Some((root, reason)) = blocked.iter().find(|(b, _)| paths.iter().any(|p| is_within(p, b))) else {
+            // A refused path is Hearth's, a denied one the device's own.
+            let local_paths: Vec<String> = [dev.tree.path(id), s.device.path(id)]
+                .into_iter()
+                .flatten()
+                .map(|p| nfc(&p.join("/")))
+                .collect();
+            let Some((root, reason)) = blocked.iter().find(|(b, r)| {
+                let candidates = if r == "denied" { &local_paths } else { &paths };
+                candidates.iter().any(|p| is_within(p, b))
+            }) else {
                 continue;
             };
-            let changes = s.server.get(id) != self.server.get(id) || s.device.get(id) != dev.tree.get(id);
+            // Hearth's refusal stops only this device's writes to Hearth;
+            // a denied path stops everything the device does there.
             let is_denied = reason == "denied";
-            if !changes && !is_denied {
+            let changes = if is_denied {
+                s.server.get(id) != self.server.get(id) || s.device.get(id) != dev.tree.get(id)
+            } else {
+                s.server.get(id) != self.server.get(id)
+            };
+            if !changes {
                 continue;
             }
             match self.server.get(id) {
@@ -834,11 +959,60 @@ impl World {
             };
             if changes {
                 listed.insert(root.clone(), reason.clone());
+                blocked_nodes.push(id);
+                // Kept back under two names: the other one is listed too.
+                if let (Some(d), Some(h)) = (dev.tree.path(id), self.server.path(id)) {
+                    let (d, h) = (d.join("/"), h.join("/"));
+                    if nfc(&d) != h {
+                        listed.insert(d, "other_name".into());
+                    }
+                }
+            }
+        }
+        // Nor a conflict copy of a kept-back item: it would be made again
+        // every round.
+        for c in s.copies.clone() {
+            let of_blocked = blocked_nodes.iter().any(|b| {
+                self.server
+                    .get(*b)
+                    .or(dev.tree.get(*b))
+                    .is_some_and(|n| nfc(&n.name) == c.original_name)
+            });
+            if of_blocked && !dev.tree.has(c.id) {
+                s.server.nodes.remove(&c.id);
+                s.device.nodes.remove(&c.id);
+                s.base.nodes.remove(&c.id);
+            }
+        }
+        // Whatever was kept back may have lost its folder to an act the
+        // person made around it: such orphans go (this stand-in keeps
+        // trees well formed; the simulator plays denied paths for real).
+        for t in [&mut s.server, &mut s.device, &mut s.base] {
+            loop {
+                let orphans: Vec<NodeId> = t
+                    .nodes
+                    .iter()
+                    .filter(|(_, n)| {
+                        n.parent != ROOT && !t.get(n.parent).is_some_and(|p| p.kind.is_folder())
+                    })
+                    .map(|(id, _)| *id)
+                    .collect();
+                if orphans.is_empty() {
+                    break;
+                }
+                for id in orphans {
+                    t.nodes.remove(&id);
+                }
             }
         }
         // A blocked item never leaves a conflict copy behind half made.
         let keep: BTreeSet<NodeId> = s.server.nodes.keys().copied().collect();
-        s.device.nodes.retain(|id, n| keep.contains(id) || dev.tree.has(*id) || !n.name.contains(" (conflict ") || s.listed.contains_key(id));
+        s.device.nodes.retain(|id, n| {
+            keep.contains(id)
+                || dev.tree.has(*id)
+                || !n.name.contains(" (conflict ")
+                || s.listed.contains_key(id)
+        });
     }
 
     fn mass_change(&self, dev: &Dev, s: &Settled) -> bool {
@@ -852,7 +1026,10 @@ impl World {
                 && !after_server.entries.contains_key(&p)
                 && !after_server.holds(h)
             {
-                let m = self.mount_at(&p).map(|m| m.path.clone()).unwrap_or_default();
+                let m = self
+                    .mount_at(&p)
+                    .map(|m| m.path.clone())
+                    .unwrap_or_default();
                 *deleted.entry(m).or_insert(0) += 1;
             }
         }
@@ -862,49 +1039,74 @@ impl World {
                 && !after_device.entries.contains_key(&p)
                 && !after_device.holds(h)
             {
-                let m = self.mount_at(&nfc(&p)).map(|m| m.path.clone()).unwrap_or_default();
+                let m = self
+                    .mount_at(&nfc(&p))
+                    .map(|m| m.path.clone())
+                    .unwrap_or_default();
                 *deleted.entry(m).or_insert(0) += 1;
             }
         }
         let files = self.server.to_paths();
         deleted.iter().any(|(m, n)| {
-            let total = files.entries.iter().filter(|(p, k)| !k.is_folder() && is_within(p, m)).count().max(1);
+            let total = files
+                .entries
+                .iter()
+                .filter(|(p, k)| !k.is_folder() && is_within(p, m))
+                .count()
+                .max(1);
             *n > 50 && n * 4 > total
         })
     }
 
     fn condition(&self, c: Condition) -> Option<Condition> {
-        if self.mutant == Mutant::BlindWrites { None } else { Some(c) }
+        if self.mutant == Mutant::BlindWrites {
+            None
+        } else {
+            Some(c)
+        }
     }
 
-    /// Sends the server's side of the outcome: one request per change,
-    /// Hearth's tree changing at the first. Returns the uploads made.
-    fn push_to_server(&mut self, name: &str, dev: &Dev, s: &Settled) -> Vec<(String, Hash)> {
+    /// Sends the server's side of the outcome: the contents first, then
+    /// one write per change, each changing Hearth at its own step.
+    /// Returns the uploads made.
+    fn push_to_server(&mut self, name: &str, s: &Settled) -> Vec<(String, Hash)> {
         let old = self.server.clone();
-        let old_paths = old.to_paths();
-        let ids: BTreeSet<NodeId> = old.nodes.keys().chain(s.server.nodes.keys()).copied().collect();
-        let mut requests: Vec<RequestKind> = Vec::new();
-        let mut uploads = Vec::new();
+        let ids: BTreeSet<NodeId> = old
+            .nodes
+            .keys()
+            .chain(s.server.nodes.keys())
+            .copied()
+            .collect();
+        let mut sends: Vec<(String, Hash)> = Vec::new();
+        // (order, request, what it changes on Hearth)
+        let mut writes: Vec<(usize, RequestKind, Change)> = Vec::new();
         for id in ids {
             let (o, n) = (old.get(id), s.server.get(id));
-            let old_path = old.path(id).map(|p| p.join("/"));
-            let new_path = s.server.path(id).map(|p| p.join("/"));
+            let old_path = old.path(id).map(|p| p.join("/")).unwrap_or_default();
+            let new_path = s.server.path(id).map(|p| p.join("/")).unwrap_or_default();
             match (o, n) {
                 (None, Some(n)) => {
-                    let path = new_path.unwrap_or_default();
                     if let Some(h) = n.kind.hash() {
-                        requests.push(RequestKind::Upload { path: path.clone(), hash: h.clone() });
-                        uploads.push((path.clone(), h.clone()));
+                        sends.push((new_path.clone(), h.clone()));
                     }
-                    requests.push(RequestKind::Write(Write {
-                        op: if n.kind.is_folder() { WriteOp::Mkdir } else { WriteOp::CreateFile },
-                        path: path.clone(),
-                        condition: self.condition(Condition::Absent),
-                        before: old_paths.hash_at(&path).cloned(),
-                    }));
+                    let op = if n.kind.is_folder() {
+                        WriteOp::Mkdir
+                    } else {
+                        WriteOp::CreateFile
+                    };
+                    let depth = new_path.matches('/').count();
+                    writes.push((
+                        2 + depth,
+                        RequestKind::Write(Write {
+                            op,
+                            path: new_path,
+                            condition: self.condition(Condition::Absent),
+                            before: None,
+                        }),
+                        Change::Insert(id, n.clone()),
+                    ));
                 }
                 (Some(o), None) => {
-                    let path = old_path.unwrap_or_default();
                     // Below a deleted folder nothing is sent on its own.
                     if o.parent != ROOT && !s.server.has(o.parent) && old.has(o.parent) {
                         continue;
@@ -913,62 +1115,90 @@ impl World {
                         Some(h) => (WriteOp::DeleteFile, Condition::Version(h.clone())),
                         None => (WriteOp::DeleteFolder, Condition::UnchangedSince),
                     };
-                    requests.push(RequestKind::Write(Write {
-                        op,
-                        path: path.clone(),
-                        condition: self.condition(c),
-                        before: o.kind.hash().cloned(),
-                    }));
+                    writes.push((
+                        0,
+                        RequestKind::Write(Write {
+                            op,
+                            path: old_path,
+                            condition: self.condition(c),
+                            before: o.kind.hash().cloned(),
+                        }),
+                        Change::Remove(id),
+                    ));
                 }
                 (Some(o), Some(n)) => {
-                    let path = old_path.unwrap_or_default();
+                    if o.parent != n.parent || o.name != n.name {
+                        let c = match o.kind.hash() {
+                            Some(h) => Condition::Version(h.clone()),
+                            None => Condition::Seq,
+                        };
+                        writes.push((
+                            1,
+                            RequestKind::Write(Write {
+                                op: WriteOp::Move(new_path.clone()),
+                                path: old_path,
+                                condition: self.condition(c),
+                                before: o.kind.hash().cloned(),
+                            }),
+                            Change::Place(id, n.parent, n.name.clone()),
+                        ));
+                    }
                     if !o.kind.same_content(&n.kind)
                         && let (Some(oh), Some(nh)) = (o.kind.hash(), n.kind.hash())
                     {
-                        requests.push(RequestKind::Upload { path: path.clone(), hash: nh.clone() });
-                        uploads.push((path.clone(), nh.clone()));
-                        requests.push(RequestKind::Write(Write {
-                            op: WriteOp::Replace,
-                            path: path.clone(),
-                            condition: self.condition(Condition::Version(oh.clone())),
-                            before: Some(oh.clone()),
-                        }));
-                    }
-                    if o.parent != n.parent || o.name != n.name {
-                        let c = match o.kind.hash() {
-                            Some(h) => Condition::Version(n.kind.hash().unwrap_or(h).clone()),
-                            None => Condition::Seq,
-                        };
-                        let before = if o.kind.is_folder() { None } else { n.kind.hash().cloned() };
-                        requests.push(RequestKind::Write(Write {
-                            op: WriteOp::Move(new_path.unwrap_or_default()),
-                            path: path.clone(),
-                            condition: self.condition(c),
-                            before,
-                        }));
+                        sends.push((new_path.clone(), nh.clone()));
+                        writes.push((
+                            1000,
+                            RequestKind::Write(Write {
+                                op: WriteOp::Replace,
+                                path: new_path,
+                                condition: self.condition(Condition::Version(oh.clone())),
+                                before: Some(oh.clone()),
+                            }),
+                            Change::Content(id, n.kind.clone()),
+                        ));
                     }
                 }
                 (None, None) => {}
             }
         }
-        if requests.is_empty() {
-            return uploads;
+        // Deletes, then moves, then creates parents before children, then
+        // replaces (stable, so the same scenario gives the same order).
+        writes.sort_by_key(|(order, _, _)| *order);
+        for (path, hash) in &sends {
+            self.request(
+                name,
+                RequestKind::Upload {
+                    path: path.clone(),
+                    hash: hash.clone(),
+                },
+                Outcome::Done,
+            );
         }
-        // Hearth carries out the whole batch at the first request.
-        self.server = s.server.clone();
-        self.keep_displaced(&old_paths);
-        let _ = dev;
         let lose = self.devs.get(name).is_some_and(|d| d.lose_next_answer);
-        let n = requests.len();
-        for (i, kind) in requests.into_iter().enumerate() {
-            let outcome = if lose && i + 1 == n { Outcome::AnswerLost } else { Outcome::Done };
+        let n = writes.len();
+        for (i, (_, kind, change)) in writes.into_iter().enumerate() {
+            let before = self.server.to_paths();
+            change.apply(&mut self.server);
+            self.keep_displaced(&before);
+            let outcome = if lose && i + 1 == n {
+                Outcome::AnswerLost
+            } else {
+                Outcome::Done
+            };
             self.request(name, kind, outcome);
+        }
+        // Whatever the writes did not reach (none, normally) is made so.
+        if self.server != s.server {
+            let before = self.server.to_paths();
+            self.server = s.server.clone();
+            self.keep_displaced(&before);
         }
         if let Some(d) = self.devs.get_mut(name) {
             d.lose_next_answer = false;
             d.remote_view = self.server.to_paths();
         }
-        uploads
+        sends
     }
 
     /// Makes the device's side of the outcome: hold what goes, download
@@ -993,7 +1223,12 @@ impl World {
         }
         // Children of removed folders go too.
         loop {
-            let orphans: Vec<NodeId> = kept.nodes.iter().filter(|(_, n)| n.parent != ROOT && !kept.has(n.parent)).map(|(id, _)| *id).collect();
+            let orphans: Vec<NodeId> = kept
+                .nodes
+                .iter()
+                .filter(|(_, n)| n.parent != ROOT && !kept.has(n.parent))
+                .map(|(id, _)| *id)
+                .collect();
             if orphans.is_empty() {
                 break;
             }
@@ -1028,9 +1263,23 @@ impl World {
             .device
             .nodes
             .iter()
-            .filter(|(id, n)| n.kind.hash().is_some() && !dev.tree.get(**id).is_some_and(|o| o.kind.same_content(&n.kind)))
-            .filter(|(_, n)| !dev.tree.to_paths().holds(n.kind.hash().map_or("", String::as_str)))
-            .filter_map(|(id, n)| s.device.path(*id).map(|p| (p.join("/"), n.kind.hash().cloned().unwrap_or_default())))
+            .filter(|(id, n)| {
+                n.kind.hash().is_some()
+                    && !dev
+                        .tree
+                        .get(**id)
+                        .is_some_and(|o| o.kind.same_content(&n.kind))
+            })
+            .filter(|(_, n)| {
+                !dev.tree
+                    .to_paths()
+                    .holds(n.kind.hash().map_or("", String::as_str))
+            })
+            .filter_map(|(id, n)| {
+                s.device
+                    .path(*id)
+                    .map(|p| (p.join("/"), n.kind.hash().cloned().unwrap_or_default()))
+            })
             .collect();
         let redownload_all = self.mutant == Mutant::RedownloadAfterDbLoss && dev.after_db_loss;
         let mut downloads = incoming.clone();
@@ -1046,7 +1295,14 @@ impl World {
         let mut corrupt = dev.corrupt_next_download;
         let mut placed_corrupt: Option<(String, Hash)> = None;
         for (path, hash) in &downloads {
-            self.request(name, RequestKind::Download { path: path.clone(), hash: hash.clone() }, Outcome::Done);
+            self.request(
+                name,
+                RequestKind::Download {
+                    path: path.clone(),
+                    hash: hash.clone(),
+                },
+                Outcome::Done,
+            );
             if corrupt {
                 corrupt = false;
                 if self.mutant == Mutant::TrustCorruptDownload {
@@ -1054,7 +1310,14 @@ impl World {
                 } else {
                     // The hash does not match: fetched again (3.6).
                     self.engine(name, EngineAction::Note("hash mismatch".into()));
-                    self.request(name, RequestKind::Download { path: path.clone(), hash: hash.clone() }, Outcome::Done);
+                    self.request(
+                        name,
+                        RequestKind::Download {
+                            path: path.clone(),
+                            hash: hash.clone(),
+                        },
+                        Outcome::Done,
+                    );
                 }
             }
         }
@@ -1064,11 +1327,25 @@ impl World {
         if self.mutant == Mutant::PartialVisible
             && let Some((path, hash)) = incoming.first()
         {
-            let mut partial = self.devs.get(name).map(|d| d.tree.clone()).unwrap_or_default();
-            if let Some(id) = s.device.at_path(&path.split('/').map(str::to_string).collect::<Vec<_>>())
+            let mut partial = self
+                .devs
+                .get(name)
+                .map(|d| d.tree.clone())
+                .unwrap_or_default();
+            if let Some(id) = s
+                .device
+                .at_path(&path.split('/').map(str::to_string).collect::<Vec<_>>())
                 && let Some(n) = s.device.get(id)
             {
-                partial.insert(id, n.parent, &n.name, Kind::File { hash: format!("partial:{hash}"), mtime: 0 });
+                partial.insert(
+                    id,
+                    n.parent,
+                    &n.name,
+                    Kind::File {
+                        hash: format!("partial:{hash}"),
+                        mtime: 0,
+                    },
+                );
                 if partial.path(id).is_some()
                     && let Some(d) = self.devs.get_mut(name)
                 {
@@ -1079,15 +1356,53 @@ impl World {
         }
         let mut finished = s.device.clone();
         if let Some((path, bad)) = placed_corrupt
-            && let Some(id) = finished.at_path(&path.split('/').map(str::to_string).collect::<Vec<_>>())
+            && let Some(id) =
+                finished.at_path(&path.split('/').map(str::to_string).collect::<Vec<_>>())
             && let Some(n) = finished.nodes.get_mut(&id)
         {
-            n.kind = Kind::File { hash: bad, mtime: 0 };
+            n.kind = Kind::File {
+                hash: bad,
+                mtime: 0,
+            };
         }
         if let Some(d) = self.devs.get_mut(name) {
             d.tree = finished;
         }
         self.engine(name, EngineAction::Disk("put in place".into()));
+    }
+}
+
+/// One write's effect on Hearth's tree.
+enum Change {
+    Insert(NodeId, Node),
+    Remove(NodeId),
+    Place(NodeId, NodeId, String),
+    Content(NodeId, Kind),
+}
+
+impl Change {
+    fn apply(&self, tree: &mut IdTree) {
+        match self {
+            Change::Insert(id, n) => {
+                tree.nodes.insert(*id, n.clone());
+            }
+            Change::Remove(id) => {
+                for gone in tree.subtree(*id) {
+                    tree.nodes.remove(&gone);
+                }
+            }
+            Change::Place(id, parent, name) => {
+                if let Some(n) = tree.nodes.get_mut(id) {
+                    n.parent = *parent;
+                    n.name = name.clone();
+                }
+            }
+            Change::Content(id, kind) => {
+                if let Some(n) = tree.nodes.get_mut(id) {
+                    n.kind = kind.clone();
+                }
+            }
+        }
     }
 }
 
