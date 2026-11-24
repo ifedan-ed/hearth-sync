@@ -275,6 +275,9 @@ version = "0.0.0"
 [[package]]
 name = "hearth-sync-model"
 version = "0.0.0"
+dependencies = [
+ "unicode-normalization",
+]
 
 [[package]]
 name = "hearth-sync-remote"
