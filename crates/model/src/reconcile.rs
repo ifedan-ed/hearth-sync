@@ -320,6 +320,10 @@ pub struct CopyMade {
     pub hash: String,
     /// The name the copy's version wanted, before it stepped aside.
     pub original_name: String,
+    /// The node whose losing version this is (for A and read-only copies
+    /// the node that kept the name; for the creation rows the node
+    /// itself).
+    pub from: NodeId,
     /// Why.
     pub reason: CopyReason,
 }
@@ -740,6 +744,7 @@ pub fn reconcile(
             id: copy_id,
             hash: l.kind.hash().cloned().unwrap_or_default(),
             original_name: d.server.name.clone(),
+            from: id,
             reason,
         });
         if reason == CopyReason::ReadOnly {
@@ -766,7 +771,7 @@ pub fn reconcile(
     resolve_server_clashes(&mut decided, remote, ctx, &mut out)?;
 
     // Stage 8: what this device cannot hold (3.8).
-    resolve_device_names(&mut decided, local, ctx, &mut out);
+    resolve_device_names(&mut decided, local, remote, ctx, &mut out);
 
     for (id, d) in &decided {
         if !d.alive {
@@ -1045,6 +1050,7 @@ fn rename_to_copy(
             id,
             hash: d.server.kind.hash().cloned().unwrap_or_default(),
             original_name: wanted.to_string(),
+            from: id,
             reason: CopyReason::NameTaken,
         });
     }
@@ -1057,9 +1063,11 @@ fn rename_to_copy(
 fn resolve_device_names(
     decided: &mut BTreeMap<NodeId, Decided>,
     local: &IdTree,
+    remote: &IdTree,
     ctx: &DeviceContext,
     out: &mut Settled,
 ) {
+    let mut stale: Vec<NodeId> = Vec::new();
     for (id, d) in decided.iter_mut() {
         if !d.alive || d.device_only {
             continue;
@@ -1074,12 +1082,18 @@ fn resolve_device_names(
         match local.get(*id) {
             // Hearth renamed a file this device holds to a name it cannot
             // hold: the local file is left untouched where it is (I10).
+            // It is a stale copy of Hearth's item, so it is no side of a
+            // conflict: no copy is made of it.
             Some(l) => {
                 d.device = Node {
                     parent: l.parent,
                     name: nfc(&l.name),
                     kind: l.kind.clone(),
                 };
+                d.server.kind = remote
+                    .get(*id)
+                    .map_or(d.server.kind.clone(), |r| r.kind.clone());
+                stale.push(*id);
             }
             None => d.server_only = true,
         }
@@ -1104,6 +1118,7 @@ fn resolve_device_names(
                     kind: l.kind.clone(),
                 };
                 out.listed.entry(id).or_insert(Listing::InsideListed);
+                stale.push(id);
             }
         }
         for (id, d) in decided.iter_mut() {
@@ -1115,6 +1130,23 @@ fn resolve_device_names(
                 out.listed.entry(*id).or_insert(Listing::InsideListed);
             }
         }
+    }
+    // No conflict copy of a stale local copy, nor of anything kept with
+    // its folder: they are no side of a conflict.
+    for id in &stale {
+        let gone: Vec<NodeId> = out
+            .copies
+            .iter()
+            .filter(|c| c.from == *id && c.id != *id && c.reason == CopyReason::BothEdited)
+            .map(|c| c.id)
+            .collect();
+        for c in gone {
+            if let Some(d) = decided.get_mut(&c) {
+                d.alive = false;
+            }
+        }
+        out.copies
+            .retain(|c| !(c.from == *id && c.id != *id && c.reason == CopyReason::BothEdited));
     }
     propagate_flag(
         decided,

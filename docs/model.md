@@ -288,3 +288,33 @@ failure stays. The shrunk scenario's text is what the archive keeps.
 
     /usr/local/bin/loadwait cargo test -p hearth-sync-model -j 4
     MODEL_SEEDS=5000 MODEL_FIRST_SEED=0 cargo test -p hearth-sync-model --release --test properties
+
+## Open findings (2026-11-24)
+
+The model's self-test (the naive sync over random seeds) is clean for
+seeds 0 to 999. A run over seeds 1000 to 3999 (2,999 scenarios, 617,227
+steps checked, 11,858 settled points, 4,491 of them against the exact
+outcome) still reports the cases below. Each is a rare combination; for
+each it is not yet settled whether the test stand-in, the merge or a
+checker's reading is at fault. Replay with
+`MODEL_SEEDS=1 MODEL_FIRST_SEED=<seed>`; the shrunk scripts:
+
+- seed 1359, the stand-in panics: in a read-only share, a device turns a
+  file into a folder, then the share leaves.
+- seed 1383 (I1, I2, I10): Hearth refuses writes to `n1`; the device
+  edits `n1`; the web turns `n1` into a folder. The local edit is lost
+  in the stand-in; whether the merge or the stand-in's handling of a
+  refused path is at fault is open.
+- seed 1883 (I6): after a restore, on a FAT device, a file renamed on the
+  web before the backup is removed locally.
+- seed 1300 (I7): Hearth refuses writes to `n1`; the device renames it
+  and then deletes it; the delete never reaches Hearth, and the
+  checker's "refused" exemption follows paths, not items.
+- seed 1439 (I8): in a read-only share, a device turns a file into a
+  folder and moves another folder into it.
+- seed 1311 (I10): two offline devices and the web create `README` and
+  `readme` in one folder on case-insensitive volumes.
+
+Fixed on the way, by the same run: a conflict copy made again every
+round for an item a device keeps at an old local name (seeds 1313 and
+3033, 499 and 150 copies; I9 caught both).

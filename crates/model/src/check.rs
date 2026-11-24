@@ -679,7 +679,10 @@ pub fn check_i6(trace: &Trace) -> Vec<Violation> {
         }
         if after_restore && let Some(a) = step.after.device(dev) {
             for (path, kind) in &b.tree.entries {
+                // A removal: the path is gone (a newer version from Hearth
+                // taking its place is not a deletion).
                 if let Some(h) = kind.hash()
+                    && !a.tree.entries.contains_key(path)
                     && !a.tree.holds(h)
                     && !on_hearth(&step.after.server, h)
                 {

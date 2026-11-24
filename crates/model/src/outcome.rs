@@ -203,6 +203,10 @@ pub fn check_versions(trace: &Trace) -> Vec<Violation> {
                     anywhere.extend(d.holding.iter().cloned());
                 }
                 live.retain(|h, _| anywhere.contains(h));
+                // Confirmed, the new root starts without history: deletes
+                // made on the old one cannot be known, so what Hearth holds
+                // comes back (contract-questions Q5).
+                may_stay.extend(step.after.server.tree.hash_counts().into_keys());
             }
             Event::Admin(AdminOp::ShareArrive { path })
                 if !before.server.mounts.contains_key(path) =>
@@ -248,6 +252,7 @@ pub fn check_versions(trace: &Trace) -> Vec<Violation> {
                 // operator's act; everything on a disk comes back by the
                 // resync by hashes (sync.md 3.11), and so does the backup.
                 may_stay.extend(live.keys().cloned());
+                retired.clear();
                 live = initial_live(&step.after);
                 // The resync after a restore has no history either: an
                 // edit made then is not known as one, so what was there
@@ -267,6 +272,7 @@ pub fn check_versions(trace: &Trace) -> Vec<Violation> {
                     }
                 }
                 may_stay.extend(before.server.tree.hash_counts().into_keys());
+                retired.clear();
             }
             Event::Settled => {
                 let after = &step.after;
