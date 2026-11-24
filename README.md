@@ -5,8 +5,10 @@ on a device and a person's files on a Hearth server the same. It is meant
 for the desktop client (Windows, macOS, Linux), a command-line client for
 servers, and the phone app with its file providers.
 
-Status: early. This repository holds the layout and the rules; the engine
-is being built, tests first. It does not sync anything yet.
+Status: early. The core (the engine's state machine, planner and
+executor) and its state database exist and are tested against a fake disk
+and a fake Hearth. There is no real file system or HTTP code yet, so it
+does not sync real folders yet.
 
 ## What it is built to do
 
@@ -48,6 +50,24 @@ network faults at any point.
 
 The protocol between the engine and the server is one written contract,
 kept with the server. `CONTRACT` names the version this code implements.
+
+## What exists
+
+- `crates/core`: the engine. Three pictures of every item (Hearth's, the
+  disk's, and the last agreed base); the decision table of every pair of
+  local and remote change as data; a planner that checks names, rights,
+  free places and cycles before any step; an executor with resumable
+  downloads and upload sessions, SHA-256 checks end to end, swaps that
+  keep what they replace, conflict copies, and a holding area for
+  everything sync removes. Guards for a missing root, mass deletions, a
+  changed or restored server. Every outside thing (disk, Hearth, clock,
+  randomness, scheduling) is an interface, so a run replays from a seed.
+- `crates/store`: the state database on SQLite (WAL, full fsync), with
+  the same contract as the in-memory store the simulator uses.
+- `docs/observation.md`: what checkers and the simulator can observe.
+- `docs/core-design.md`: how the core is arranged and why.
+- `docs/performance.md`: measured figures against the budgets.
+- `docs/contract-questions.md`: open questions about the sync API.
 
 ## Building
 

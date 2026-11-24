@@ -7,5 +7,22 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# The small in-crate fake disk and fake Hearth (module `testkit`), for the
+# store crate's tests and for anyone who wants a quick harness. The full
+# simulator is hearth-sync-sim.
+testkit = []
+
+[dependencies]
+# SHA-256, the one hash of the contract (sync-api.md 1.5). RustCrypto's
+# implementation: pure Rust, uses the CPU's SHA extensions when present.
+sha2 = "0.10"
+# NFC normalisation and the check that a name is NFC (sync-api.md 13).
+unicode-normalization = "0.1"
+
+[dev-dependencies]
+# Property tests with shrinking and replayable seeds (docs/sync.md 7.2).
+proptest = "1"
+
 [lints]
 workspace = true

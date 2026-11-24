@@ -1,0 +1,66 @@
+# The corpus of nasty names (docs/sync.md 7.7). One case per line:
+#
+#   <name> TAB <hearth> TAB <windows> TAB <linux> TAB <what it is for>
+#
+# <name> is written with escapes: \u{XXXX} for a character, \xHH for a
+# raw byte (to make names that are not UTF-8), \t for a tab; \\ for a
+# backslash. <hearth> is what Hearth answers (sync-api.md 13: ok, or the
+# refusal reason). <windows> and <linux> are whether a device of that kind
+# can hold the name as a remote name (ok, or the hold refusal). Used by
+# the core's name tests; the simulator and the real-file-system suite
+# read the same file.
+#
+# name	hearth	windows	linux	for
+Budget.xlsx	ok	ok	ok	a plain name
+caf\u{00E9}	ok	ok	ok	composed e-acute (NFC)
+cafe\u{0301}	not_nfc	ok	ok	decomposed e-acute: same name as the one above after NFC
+Report.pdf	ok	ok	ok	case pair, first
+report.pdf	ok	ok	ok	case pair, second: one name on an insensitive volume
+stra\u{00DF}e	ok	ok	ok	German sharp s: simple folding keeps it
+STRASSE	ok	ok	ok	full folding would equal the sharp s name; simple folding does not
+\u{1E9E}	ok	ok	ok	capital sharp s folds to sharp s
+\u{0130}stanbul	ok	ok	ok	Turkish dotted capital I
+\u{0131}stanbul	ok	ok	ok	Turkish dotless i
+\u{03A3}\u{03C3}\u{03C2}	ok	ok	ok	Greek sigma, small sigma, final sigma: one key folded
+a<b	ok	character	ok	Windows refuses <
+a>b	ok	character	ok	Windows refuses >
+a:b	ok	character	ok	Windows refuses :, macOS shows it as /
+a"b	ok	character	ok	Windows refuses "
+a\\b	separator	character	ok	backslash: Hearth refuses it on every system
+a|b	ok	character	ok	Windows refuses |
+a?b	ok	character	ok	Windows refuses ?
+a*b	ok	character	ok	Windows refuses *
+a\u{0001}b	control	character	ok	control character
+a\u{007F}b	control	ok	ok	DEL
+name.	ok	trailing_dot_or_space	ok	trailing dot
+name 	ok	trailing_dot_or_space	ok	trailing space
+CON	ok	reserved_device	ok	device name
+con.txt	ok	reserved_device	ok	device name before an extension, lower case
+Com1.log	ok	reserved_device	ok	COM1 in mixed case
+LPT\u{00B9}	ok	reserved_device	ok	superscript digit form
+CONSOLE	ok	ok	ok	not a device name
+COM10	ok	ok	ok	not a device name
+\u{1F600}.png	ok	ok	ok	emoji outside the basic plane
+\u{200F}rtl	ok	ok	ok	right-to-left mark
+zero\u{200B}width	ok	ok	ok	zero-width space
+-leading-dash	ok	ok	ok	a leading dash
+.hidden	ok	ok	ok	a leading dot
+ 	blank	trailing_dot_or_space	ok	a single space
+\u{00A0}	blank	ok	ok	a no-break space only
+.htaccess	reserved	ok	ok	Hearth refuses it
+.HTACCESS	reserved	ok	ok	Hearth refuses it in any case
+.part	reserved	ok	ok	Hearth refuses it
+x.part	ok	ok	ok	not reserved: only the whole name is
+.	dot	trailing_dot_or_space	ok	dot
+..	dot	trailing_dot_or_space	ok	dot dot
+.hearthsync	ok	engine_name	engine_name	the engine's own folder (at a sync root)
+x.hearthtmp	ok	engine_name	engine_name	looks like the engine's temp name
+Budget (conflict Laptop, 2026-11-24 14.03.22).xlsx	ok	ok	ok	looks like a conflict copy: synced as an ordinary file
+*.tmp	ok	character	ok	equal to an ignore pattern
+\xFF\xFEbad	not_utf8	ok	ok	bytes that are not UTF-8 (Linux allows them)
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	ok	ok	ok	250 bytes: Hearth's limit exactly
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	too_long	ok	ok	251 bytes: one over Hearth's limit
+\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}\u{00E9}	too_long	ok	too_long	128 two-byte letters: 256 bytes, 128 UTF-16 units
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	too_long	ok	ok	255 bytes: the Linux limit exactly
+\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}	too_long	ok	too_long	64 emoji: 256 bytes, 128 UTF-16 units
+\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}	too_long	too_long	too_long	128 emoji: 256 UTF-16 units, one over 255

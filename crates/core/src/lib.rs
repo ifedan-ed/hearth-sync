@@ -26,3 +26,32 @@
 //! is written without reading the model: when they disagree, one of them
 //! has a bug, and that is the point of having two.
 #![forbid(unsafe_code)]
+
+pub mod config;
+pub mod engine;
+pub mod env;
+pub mod failure;
+pub mod fs;
+pub mod guarantees;
+pub mod ids;
+pub mod ignore;
+pub mod memstore;
+pub mod names;
+pub mod observe;
+pub mod photo;
+pub mod plan;
+pub mod remote;
+pub mod store;
+#[cfg(any(test, feature = "testkit"))]
+pub mod testkit;
+pub mod tree;
+pub mod view;
+
+#[cfg(test)]
+mod tests;
+
+pub use config::Config;
+pub use engine::{Engine, EngineError, Event, PauseReason, StepOutcome};
+pub use env::{Clock, Env, FirstReady, Random, Scheduler};
+pub use memstore::MemStore;
+pub use store::Store;
