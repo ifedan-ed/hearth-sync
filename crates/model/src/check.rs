@@ -631,11 +631,12 @@ pub fn check_i7_quiescence(trace: &Trace, cfg: &CheckConfig) -> Vec<Violation> {
 }
 
 /// The listed path covering `path` on a device (itself or a folder above
-/// it), compared in NFC.
+/// it), compared in NFC. A transient listing covers nothing.
 fn listed_reason<'a>(d: &'a DeviceView, path: &str) -> Option<&'a String> {
     let p = nfc_path(path);
     d.listed
         .iter()
+        .filter(|(_, r)| !r.starts_with("transient:"))
         .find(|(l, _)| is_within(&p, &nfc_path(l)))
         .map(|(_, r)| r)
 }
@@ -887,6 +888,12 @@ fn listing_is_true(
     let name = base_name(path);
     let p = nfc_path(path);
     let lacks = |bit: u8| mount_of(server, &p).is_some_and(|(_, m)| m.perms & bit == 0);
+    // A problem that passes on its own (a hash mismatch being retried, a
+    // file still changing) may be listed at any step; at a settled point
+    // it excuses nothing (I8, see listed_reason).
+    if reason.starts_with("transient:") {
+        return true;
+    }
     if let Some(code) = reason.strip_prefix("name_refused:") {
         return hearth_refuses_local(name).is_some_and(|r| r.code() == code);
     }

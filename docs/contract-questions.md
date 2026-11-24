@@ -101,3 +101,87 @@ an upload only when the content differs from the base. Changes of the
 execute bit or the modification time alone are not synced by step 1 (the
 plan's 3.9 syncs the execute bit; `PATCH /sync/files/{id}` is the way).
 Recorded so it is a choice, not an oversight; no question for the contract.
+
+## From the reference model (crates/model), 2026-11-24
+
+Questions on the plan (docs/sync.md) as much as on the contract, numbered
+M1 and on. Each gives the reading the model uses meanwhile.
+
+M1. Mass change: what counts. sync.md 3.11 pauses "a plan that would
+delete or overwrite more than 50 files and more than a quarter of a
+mount on either side". A plan is not observable from outside the
+engine. Reading: the checker counts files an engine run removes (from
+its disk, or from Hearth's tree) between two outside events concerning
+that device, per mount, against the mount's files at the start of that
+run; overwrites are not counted (an overwrite keeps the old content as
+a version or a conflict copy). (crates/model/src/check.rs,
+`check_mass_change`.) Should overwrites count, and is "a quarter of a
+mount" the mount's file count or bytes?
+
+M2. Conflict copy names: the extension. 3.5.1 says the extension is
+never shortened but not where it starts. Reading: from the last dot,
+when that dot is neither the first nor the last character; `.bashrc`
+and `notes.` have none, `a.tar.gz` has `.gz`. (name.rs,
+`split_extension`.)
+
+M3. Conflict copy names: the device label. "Cut to 30 characters and
+cleaned of characters any OS refuses." Reading: remove `< > : " / \ | ?
+*` and control characters, cut to 30 characters (not bytes), then
+remove trailing dots and spaces (Windows refuses a name ending so, and
+the label is followed by a comma, but a reader would be surprised by
+`Laptop. ,`). (name.rs, `conflict_device_label`.)
+
+M4. Two local files that differ only by Unicode normalisation (an ext4
+or NTFS volume holds both `Café` composed and decomposed) want one name
+on Hearth, which stores NFC. The creation rows of 3.5 do not cover two
+local items. Reading: the first by identity is uploaded under the NFC
+name; the other stays local, untouched, listed as `name_clash`.
+(reconcile.rs, `resolve_server_clashes`.)
+
+M5. A replaced root confirmed. 3.11: a root without its marker pauses
+and "nothing is deleted anywhere" until the person confirms. What does
+"go on" do with an empty folder there? Reading: the folder becomes a
+new, empty root; everything on Hearth is downloaded into it; nothing is
+deleted on Hearth. (The model's test sync does this; the checkers only
+require that nothing is deleted on Hearth while the root is replaced.)
+
+M6. A share that leaves with local changes not uploaded. sync.md 4.2:
+they "stay on disk, in a folder renamed '<name> (no longer shared)',
+and are listed". Is that folder synced into the home mount (it sits in
+the home part of the tree), or kept local and listed? Reading: kept
+local, listed with `no_longer_shared`, never uploaded (the person
+decides). Where exactly does it sit: beside where the mount was?
+Reading: yes, at the mount's place, named after the mount's last name.
+
+M7. Case folding. 3.8 says "Unicode simple folding". Which Unicode
+version, and the Turkish rules (status T in CaseFolding.txt) left out?
+Reading: status C and S, no T, so `İ` (U+0130) folds to nothing and
+`ı` stays itself; `ß` does not fold to `ss`. (name.rs, `simple_fold`.)
+
+M8. A file moved out of a folder that the other side deletes. The table
+says local delete against remote move is "delete on Hearth", so a file
+someone deliberately moved elsewhere is deleted because its old folder
+was deleted on the other side. Reading: as the table says (the file is
+in Hearth's trash). Intended?
+
+M9. A read-only mount where Hearth deleted a file that this device
+edited (B in a read-only mount): "uploaded again as a new file" cannot
+happen. Not in the Permissions rows. Reading: the edited file stays
+local, untouched, listed as `read_only_edit`. (reconcile.rs, stage 3.)
+
+M10. Hearth renames a file to a name this device cannot hold (`a:b` on
+Windows). 3.8 covers a remote file "not synced to a Windows device" but
+not one the device already holds under an old name. Reading: the local
+file stays at its old name, untouched, listed `device_refused:...`; the
+synced tree keeps its old state so nothing is retried. (reconcile.rs,
+stage 8.)
+
+M11. In the creation row "file and folder: the file becomes a conflict
+copy on its own side", when the file is Hearth's, whose device name and
+time does the copy carry? Reading: the device that makes the copy, and
+the file's own mtime. (reconcile.rs, `rename_to_copy`.)
+
+M12. Holding area expiry: 3.7 empties entries "after 7 days ... or when
+the volume runs short of space ... only for entries whose hash Hearth
+still has". The checker requires the hash condition (through I1) but
+not the age, since running short of space may empty earlier. Correct?

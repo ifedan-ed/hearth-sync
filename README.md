@@ -69,6 +69,25 @@ kept with the server. `CONTRACT` names the version this code implements.
 - `docs/performance.md`: measured figures against the budgets.
 - `docs/contract-questions.md`: open questions about the sync API.
 
+## Checking it
+
+The engine is tested against a reference model (`crates/model`): a short,
+independent statement of what correct sync means, written from the plan
+and the protocol alone.
+
+- The three-way merge as a table, one test per cell.
+- One checker per guarantee (nothing lost, nothing overwritten unseen,
+  nothing half written, convergence, one conflict copy per losing
+  version, and the rest), run after every step of every simulated run.
+- Random scenarios from a seed: several devices on different file
+  systems, nasty names, concurrent edits, crashes, network faults, clock
+  skew, server restores. A failing run shrinks to a short plain-text
+  script that is kept and replayed for ever.
+- Deliberately broken variants prove that each checker catches what it
+  is meant to.
+
+See `docs/model.md`.
+
 ## Building
 
     cargo build --workspace
