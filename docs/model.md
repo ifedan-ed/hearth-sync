@@ -81,7 +81,7 @@ Conflict copies are named `<stem> (conflict <device>, <yyyy-MM-dd
 HH.mm.ss>)<.ext>` with the device's cleaned label and the losing file's
 mtime in the device's local time, numbered ` 2`, ` 3` before the bracket
 when taken, the stem shortened to fit Hearth's 250 bytes. Readings of
-the open details are in docs/contract-questions.md (Q2, Q3, Q11).
+the open details are in docs/contract-questions.md (M2, M3, M11).
 
 ## The settled outcome: exact, or a set
 
@@ -149,7 +149,7 @@ step, device, path, what was expected and what was found.
 Where a guarantee speaks of something no observer sees, the checker
 checks its observable consequence: I4 and I5 as "only saved contents at
 real names", I11 as "no completed transfer redone", the mass-change
-guard by engine runs between outside events (Q1 in
+guard by engine runs between outside events (M1 in
 docs/contract-questions.md).
 
 ### The proof that they bite

@@ -1005,7 +1005,7 @@ fn resolve_server_clashes(
             // No node of Hearth's: two of the device's own files with
             // one name on Hearth (an NFC and an NFD spelling on a volume
             // that keeps both). Not in the table; the model's reading
-            // (docs/contract-questions.md Q4): the first by id keeps the
+            // (docs/contract-questions.md M4): the first by id keeps the
             // name, the others stay local, listed as a name clash.
             for f in files.iter().skip(1) {
                 if let Some(d) = decided.get_mut(f) {

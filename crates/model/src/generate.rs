@@ -244,7 +244,7 @@ impl Gen {
 
     /// A name for an act on `side`: names like the engine's own are
     /// made only on the web (a person's own `x.hearthtmp` on a disk is
-    /// left alone by the engine, docs/contract-questions.md Q14).
+    /// left alone by the engine, docs/contract-questions.md M14).
     fn name_for(&mut self, side: &Side, folder: bool) -> String {
         let n = self.name(folder);
         if matches!(side, Side::Device(_)) && crate::name::is_engine_name(&n, true) {

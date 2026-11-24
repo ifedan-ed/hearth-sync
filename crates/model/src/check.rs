@@ -1190,7 +1190,7 @@ fn listing_is_true(
             .any(|l| *l != path && is_within(&p, &nfc_path(l))),
         // One item held under two names, because one side cannot take
         // the other's name (a remote rename to a name this device cannot
-        // hold, Q10; a local rename to a name Hearth refuses, 3.8): the
+        // hold, M10; a local rename to a name Hearth refuses, 3.8): the
         // side with the refused name is listed with its reason, the other
         // name with this code. True while exactly one side holds the path.
         "other_name" => {

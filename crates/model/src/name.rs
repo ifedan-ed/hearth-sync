@@ -304,7 +304,7 @@ fn simple_fold(c: char) -> char {
 /// (sync-api 13, "The engine's own names"; sync.md 3.7): `.hearthsync` at
 /// the root, and anything ending `.hearthtmp` in any folder, since the
 /// engine's temporary files sit beside their targets wherever those are
-/// (docs/contract-questions.md Q14).
+/// (docs/contract-questions.md M14).
 pub fn is_engine_name(name: &str, at_root: bool) -> bool {
     (at_root && name == ".hearthsync") || name.ends_with(".hearthtmp")
 }
@@ -312,7 +312,7 @@ pub fn is_engine_name(name: &str, at_root: bool) -> bool {
 /// A name split into stem and extension for a conflict copy. The
 /// extension is from the last dot when that dot is neither the first nor
 /// the last character (".bashrc" and "notes." have none). The documents do
-/// not define the split; docs/contract-questions.md Q2 records this
+/// not define the split; docs/contract-questions.md M2 records this
 /// reading.
 pub fn split_extension(name: &str) -> (&str, &str) {
     match name.rfind('.') {

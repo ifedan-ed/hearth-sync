@@ -205,7 +205,7 @@ pub fn check_versions(trace: &Trace) -> Vec<Violation> {
                 live.retain(|h, _| anywhere.contains(h));
                 // Confirmed, the new root starts without history: deletes
                 // made on the old one cannot be known, so what Hearth holds
-                // comes back (contract-questions Q5).
+                // comes back (contract-questions M5).
                 may_stay.extend(step.after.server.tree.hash_counts().into_keys());
             }
             Event::Admin(AdminOp::ShareArrive { path })

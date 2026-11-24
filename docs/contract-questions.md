@@ -176,7 +176,7 @@ file stays at its old name, untouched; the Hearth item is listed
 `device_refused:...` and the local copy `other_name`; the synced
 tree keeps its old state so nothing is retried. (reconcile.rs, stage 8.)
 
-Q13. A lost state database (I12) after a person deleted a file locally
+M13. A lost state database (I12) after a person deleted a file locally
 but before the delete was sent: the device cannot tell the delete from
 a file it never had, so the file is downloaded again. Reading: that is
 the documented behaviour ("the next start compares disk and Hearth by
@@ -194,7 +194,7 @@ the volume runs short of space ... only for entries whose hash Hearth
 still has". The checker requires the hash condition (through I1) but
 not the age, since running short of space may empty earlier. Correct?
 
-Q14. The engine's own names. sync-api 13: "the engine never syncs a
+M14. The engine's own names. sync-api 13: "the engine never syncs a
 remote entry with such a name at a sync root". But the engine's
 temporary files (`.<name>.<op id>.hearthtmp`, sync.md 3.7) sit beside
 their targets in any folder, so a remote `x.hearthtmp` in a subfolder
@@ -204,7 +204,7 @@ at the sync root only; any name ending `.hearthtmp` is the engine's in
 every folder, never synced in either direction, listed `engine_name`
 when it is on Hearth. (name.rs, `is_engine_name`.)
 
-Q15. A folder Hearth renamed to a name this device cannot hold (Q10 for
+M15. A folder Hearth renamed to a name this device cannot hold (M10 for
 a folder). Reading: the device keeps the folder at its old name and
 leaves everything in it as it is; changes made inside it on Hearth do
 not reach this device until the name is one it can hold (the folder's
@@ -212,8 +212,8 @@ listing covers its contents). The alternative, syncing the contents
 into the old-named folder, would make the device's tree differ from
 Hearth's in a way no listing explains. (reconcile.rs, stage 8.)
 
-Q16. Names the engine may give. sync.md 3.8: "The engine never renames
+M16. Names the engine may give. sync.md 3.8: "The engine never renames
 a file on Hearth because one device cannot hold its name." Reading,
 checked: at a settled point every name on Hearth is one a person gave
 (on any side) or a conflict copy name of 3.5.1. A device's "(no longer
-shared)" folder stays local (Q6).
+shared)" folder stays local (M6).

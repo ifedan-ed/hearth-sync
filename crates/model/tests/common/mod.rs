@@ -328,7 +328,7 @@ impl World {
                     if d.root == RootState::Replaced {
                         // "Go on" with a replaced root: a new, empty root;
                         // nothing is deleted anywhere (the model's reading,
-                        // docs/contract-questions.md Q5).
+                        // docs/contract-questions.md M5).
                         d.root = RootState::Present;
                         d.tree = IdTree::new();
                         d.base = IdTree::new();
@@ -683,7 +683,7 @@ impl World {
             match (why, device_path, server_path) {
                 // Hearth renamed it to a name this device cannot hold: the
                 // Hearth item is listed with the reason, the local copy
-                // left where it was (contract-questions Q10).
+                // left where it was (contract-questions M10).
                 (Listing::DeviceRefused(_) | Listing::EngineName, Some(d), Some(h))
                     if nfc(&d) != h =>
                 {
