@@ -26,9 +26,25 @@ Done:
   guards; error classes and backoff; recovery after a crash; the
   observation interface and the guarantees as functions; the photo
   uploader's shapes.
-- Tests: see the README of the step's report in the Hearth repository's
-  docs/progress.md entry; the counts are in docs/performance.md and the
-  commit messages.
+- Tests (all green, `cargo clippy -- -D warnings` clean): 102 in the core
+  (every cell of the files and folders tables end to end by name, the
+  creations, rights, names from the corpus, guards, the holding area,
+  cursor expiry and restored servers, lost answers, corrupted downloads,
+  a crash between every two steps of a scenario, a store failure at each
+  of 60 write points, a deleted database, the same seed giving the same
+  run, the store contract, and property tests: random changes on both
+  sides on a case-sensitive and a case-insensitive volume with random
+  crashes, a replayed feed, names over the corpus' alphabet); 8 for the
+  SQLite store against the same contract and random batches compared
+  with the in-memory store; a killed-writer crash test; the budgets
+  benchmark (docs/performance.md). Property cases run locally: 1,024 per
+  property; the nightly workflow runs 200,000.
+- The random tests found, and the code now handles: a resync listing
+  that removed what its last page delivered; swapped names waiting on
+  each other (now untangled through a parking name); a move into a name
+  whose holder Hearth itself moved there; folder moves whose children
+  were renamed at the same time; and a gap in the contract's feed rules
+  (docs/contract-questions.md Q6).
 
 Not done in step 1 (by the plan's split or the brief):
 

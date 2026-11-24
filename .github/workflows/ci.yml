@@ -1,0 +1,33 @@
+# Every push on the public build copy: formatting, lints with warnings as
+# errors, and the tests, on Linux, Windows and macOS. The compiler is the
+# one rust-toolchain.toml pins (rustup reads it).
+name: ci
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show active-toolchain
+      - name: Formatting
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --all --check
+      - name: Lints
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        env:
+          PROPTEST_CASES: "2048"
+        run: cargo test --workspace --locked

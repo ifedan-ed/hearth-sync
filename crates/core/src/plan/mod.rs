@@ -149,6 +149,11 @@ pub struct Planner<'a> {
     /// The next node id to give (for splits); the engine stores it after.
     pub next_node: &'a Cell<u64>,
     deletable: RefCell<BTreeMap<NodeId, bool>>,
+    /// Per pass: each folder's exclusion and its path on Hearth, so a
+    /// first sync of a million files reads each folder once, not once per
+    /// file below it.
+    excluded: RefCell<BTreeMap<NodeId, view::Exclusion>>,
+    remote_paths: RefCell<BTreeMap<NodeId, Option<Vec<String>>>>,
 }
 
 impl<'a> Planner<'a> {
@@ -182,6 +187,8 @@ impl<'a> Planner<'a> {
             root,
             next_node,
             deletable: RefCell::new(BTreeMap::new()),
+            excluded: RefCell::new(BTreeMap::new()),
+            remote_paths: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -229,7 +236,7 @@ impl<'a> Planner<'a> {
                 Decision::Clean
             });
         }
-        match view::exclusion(self.store, self.unselected, &rec)? {
+        match self.exclusion(&rec)? {
             view::Exclusion::None => {}
             view::Exclusion::E2ee => {
                 return Ok(if local_only {
@@ -243,7 +250,7 @@ impl<'a> Planner<'a> {
             }
             view::Exclusion::Unselected => return self.plan_unselected(&rec, mount),
         }
-        if remote_only && view::remote_ignored(self.store, self.mounts, self.ignore, &rec)? {
+        if remote_only && self.remote_ignored(&rec)? {
             return Ok(Decision::Clean);
         }
         // A local picture of another kind than the others: the name changed
@@ -277,6 +284,115 @@ impl<'a> Planner<'a> {
     }
 
     // ----- exclusions -----
+
+    /// Whether a node is out of sync by selection or encryption (the same
+    /// answer as `view::exclusion`), with each folder's answer kept for the
+    /// pass.
+    fn exclusion(&self, rec: &NodeRecord) -> StoreResult<view::Exclusion> {
+        if self.unselected.contains(&rec.node) {
+            return Ok(view::Exclusion::Unselected);
+        }
+        let mut parents = Vec::new();
+        if let Some(p) = rec.local.as_ref().and_then(|l| l.parent) {
+            parents.push(p);
+        }
+        if let Some(p) = rec.remote.as_ref().and_then(|r| r.parent.clone())
+            && let Some(pn) = self.store.node_by_remote(&p)?
+        {
+            parents.push(pn);
+        }
+        for p in parents {
+            let e = self.folder_exclusion(p, 0)?;
+            if e != view::Exclusion::None {
+                return Ok(e);
+            }
+        }
+        Ok(view::Exclusion::None)
+    }
+
+    /// A folder's exclusion for what is below it: unselected, the top of
+    /// an end-to-end folder, or below either.
+    fn folder_exclusion(&self, n: NodeId, depth: usize) -> StoreResult<view::Exclusion> {
+        if let Some(e) = self.excluded.borrow().get(&n) {
+            return Ok(*e);
+        }
+        // A provisional answer first: the two pictures' parents can form a
+        // cycle for a moment (a local move against a remote one), and the
+        // walk must end there instead of recursing for ever.
+        self.excluded.borrow_mut().insert(n, view::Exclusion::None);
+        let e = if depth > 1_000 {
+            view::Exclusion::None
+        } else if self.unselected.contains(&n) {
+            view::Exclusion::Unselected
+        } else {
+            match self.store.node(n)? {
+                None => view::Exclusion::None,
+                Some(rec)
+                    if rec
+                        .remote
+                        .as_ref()
+                        .is_some_and(|r| r.crypt == crate::tree::Crypt::E2ee) =>
+                {
+                    view::Exclusion::E2ee
+                }
+                Some(rec) => {
+                    let mut out = view::Exclusion::None;
+                    let mut parents = Vec::new();
+                    if let Some(p) = rec.local.as_ref().and_then(|l| l.parent) {
+                        parents.push(p);
+                    }
+                    if let Some(p) = rec.remote.as_ref().and_then(|r| r.parent.clone())
+                        && let Some(pn) = self.store.node_by_remote(&p)?
+                    {
+                        parents.push(pn);
+                    }
+                    for p in parents {
+                        if p == n {
+                            continue;
+                        }
+                        let x = self.folder_exclusion(p, depth + 1)?;
+                        if x != view::Exclusion::None {
+                            out = x;
+                            break;
+                        }
+                    }
+                    out
+                }
+            }
+        };
+        self.excluded.borrow_mut().insert(n, e);
+        Ok(e)
+    }
+
+    /// Whether Hearth's item is matched by the ignore rules at its path,
+    /// with each folder's path kept for the pass.
+    fn remote_ignored(&self, rec: &NodeRecord) -> StoreResult<bool> {
+        let Some(r) = &rec.remote else {
+            return Ok(false);
+        };
+        let parent_path = match &r.parent {
+            None => return Ok(false),
+            Some(p) => match self.store.node_by_remote(p)? {
+                Some(pn) => self.folder_remote_path(pn)?,
+                None => None,
+            },
+        };
+        let Some(mut parts) = parent_path else {
+            return Ok(false);
+        };
+        parts.push(r.name.clone());
+        let refs: Vec<&str> = parts.iter().map(String::as_str).collect();
+        Ok(self.ignore.is_ignored(&refs, r.kind == Kind::Folder))
+    }
+
+    fn folder_remote_path(&self, n: NodeId) -> StoreResult<Option<Vec<String>>> {
+        if let Some(p) = self.remote_paths.borrow().get(&n) {
+            return Ok(p.clone());
+        }
+        let p = view::remote_path(self.store, self.mounts, n)?;
+        self.remote_paths.borrow_mut().insert(n, p.clone());
+        Ok(p)
+    }
 
     /// A node inside a folder the person chose not to sync (3.13): what is
     /// on disk and synced leaves through the holding area; what is only

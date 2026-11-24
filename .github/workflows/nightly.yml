@@ -1,0 +1,32 @@
+# Nightly: the property tests with many more cases, the store compared with
+# the in-memory store on many more random batches, and the budgets of
+# docs/sync.md 7.9 at a million entries. A failing case prints its seed and
+# its shrunk input in the log.
+name: nightly
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  properties:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - name: Property tests
+        env:
+          PROPTEST_CASES: "200000"
+          STORE_SEEDS: "20000"
+        run: cargo test --release --workspace --locked
+  budgets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Budgets at a million entries
+        run: cargo test --release -p hearth-sync-store --test budgets --locked -- --ignored --nocapture
