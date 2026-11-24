@@ -2,6 +2,19 @@
 
 Choices with lasting effect, and why. Newest first.
 
+## 2026-11-24: crash dumps, large files, the mirror's one route
+
+- Two crash dumps (13 MB each) were committed in crates/core. Removed in
+  an ordinary commit; history is not rewritten here (the public mirror's
+  filter drops them from every commit). Core dumps are off in every test
+  run (`ulimit -c 0`, `--ulimit core=0` in `ci/cargo.sh`), ignored by
+  patterns that match only dump files (a bare `core` rule would also hide
+  the crate folder crates/core), and any file over 5 MB is refused by CI
+  and by the pre-commit hook.
+- The public build copy is made only by `tools/export/public-mirror.sh`,
+  deterministic and fast-forward only, so it can run after every merge
+  without anyone choosing what to rewrite by hand.
+
 ## 2026-11-24: platform order and device sign-in (Maintainer's answers)
 
 - Linux first (his Dell), with good Windows support as well; macOS after.

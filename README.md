@@ -74,7 +74,11 @@ kept with the server. `CONTRACT` names the version this code implements.
     cargo build --workspace
     cargo test --workspace
 
-The compiler version is pinned in `rust-toolchain.toml`.
+The compiler version is pinned in `rust-toolchain.toml`. `ci/cargo.sh`
+runs any cargo command in a container with that compiler, with capped
+CPUs and memory and core dumps off. `tools/check-large-files.sh` refuses
+files over 5 MB; `git config core.hooksPath tools/hooks` runs it before
+every commit.
 
 ## Licence
 

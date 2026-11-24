@@ -34,6 +34,8 @@ jobs:
           auth=$(printf 'ci:%s' "${{ github.token }}" | base64 -w0)
           git -c http.extraHeader="Authorization: Basic $auth" fetch -q --depth 1 "${{ github.server_url }}/${{ github.repository }}.git" "${{ github.sha }}"
           git checkout -q FETCH_HEAD
+      - name: No file over 5 MB
+        run: tools/check-large-files.sh
       - name: Toolchain
         run: |
           rustup component add rustfmt clippy
@@ -43,4 +45,7 @@ jobs:
       - name: Lints
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests
-        run: cargo test --workspace --locked
+        # Core dumps off: a crashed test once left two in the checkout.
+        run: |
+          ulimit -c 0
+          cargo test --workspace --locked

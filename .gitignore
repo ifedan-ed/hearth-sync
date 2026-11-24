@@ -1,1 +1,9 @@
 /target
+# Core dumps from crashed tests (two were once committed by accident).
+# Only dump files match: `core` alone would also match the crate folder
+# crates/core, so a bare `core` is ignored as a file and re-included as a
+# folder by the rule after it.
+core.[0-9]*
+*.core
+core
+!core/

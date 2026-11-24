@@ -20,6 +20,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: No file over 5 MB
+        if: matrix.os == 'ubuntu-latest'
+        run: tools/check-large-files.sh
       - name: Toolchain
         run: rustup show active-toolchain
       - name: Formatting
@@ -30,4 +33,8 @@ jobs:
       - name: Tests
         env:
           PROPTEST_CASES: "2048"
-        run: cargo test --workspace --locked
+        shell: bash
+        # Core dumps off (none on Windows; ulimit is a no-op there).
+        run: |
+          ulimit -c 0 || true
+          cargo test --workspace --locked

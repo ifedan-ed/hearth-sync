@@ -22,11 +22,15 @@ jobs:
         env:
           PROPTEST_CASES: "200000"
           STORE_SEEDS: "20000"
-        run: cargo test --release --workspace --locked
+        run: |
+          ulimit -c 0
+          cargo test --release --workspace --locked
   budgets:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - name: Budgets at a million entries
-        run: cargo test --release -p hearth-sync-store --test budgets --locked -- --ignored --nocapture
+        run: |
+          ulimit -c 0
+          cargo test --release -p hearth-sync-store --test budgets --locked -- --ignored --nocapture
